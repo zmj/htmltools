@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BG3 Party Randomizer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital@0;1&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Crimson Text', Georgia, serif;
+            background:
+                radial-gradient(ellipse at center, rgba(30, 20, 15, 0.8) 0%, rgba(10, 8, 6, 0.95) 100%),
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 2px,
+                    rgba(0, 0, 0, 0.03) 2px,
+                    rgba(0, 0, 0, 0.03) 4px
+                );
+            background-color: #0d0a08;
+            color: #d4c4a8;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: linear-gradient(180deg,
+                rgba(35, 28, 20, 0.95) 0%,
+                rgba(25, 20, 15, 0.98) 100%
+            );
+            border: 3px solid #5c4a32;
+            border-image: linear-gradient(180deg, #8b7355, #3d2e1f, #8b7355) 1;
+            box-shadow:
+                inset 0 0 60px rgba(0, 0, 0, 0.5),
+                0 0 30px rgba(0, 0, 0, 0.8),
+                0 0 2px #8b7355;
+            padding: 30px;
+            position: relative;
+        }
+
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            right: 8px;
+            bottom: 8px;
+            border: 1px solid rgba(139, 115, 85, 0.3);
+            pointer-events: none;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(139, 115, 85, 0.4);
+        }
+
+        h1 {
+            font-family: 'Cinzel', Georgia, serif;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #c9a85c;
+            text-shadow:
+                0 0 10px rgba(201, 168, 92, 0.3),
+                2px 2px 4px rgba(0, 0, 0, 0.8);
+            letter-spacing: 3px;
+            margin-bottom: 0;
+        }
+
+        .instructions {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(139, 115, 85, 0.4);
+            border-left: 3px solid #8b7355;
+            padding: 15px 20px;
+            margin-bottom: 25px;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            font-style: italic;
+            color: #b8a88a;
+        }
+
+        .instructions strong {
+            color: #c9a85c;
+            font-style: normal;
+        }
+
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 25px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            font-size: 0.9rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-dot {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0, 0, 0, 0.5);
+            box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .legend-dot.required {
+            background: linear-gradient(135deg, #7a9f5a 0%, #4a6b35 100%);
+            border-color: #3d5a2a;
+        }
+        .legend-dot.available {
+            background: linear-gradient(135deg, #6a8cba 0%, #3d5a7a 100%);
+            border-color: #2d4a6a;
+        }
+        .legend-dot.unavailable {
+            background: linear-gradient(135deg, #5a5550 0%, #3a3530 100%);
+            border-color: #2a2520;
+        }
+
+        .companions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .companion {
+            background: linear-gradient(180deg,
+                rgba(50, 40, 30, 0.9) 0%,
+                rgba(30, 25, 18, 0.95) 100%
+            );
+            border: 2px solid #3d3025;
+            padding: 12px 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+            position: relative;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+                0 2px 4px rgba(0, 0, 0, 0.4);
+        }
+
+        .companion:hover {
+            border-color: #6b5a45;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+                0 4px 12px rgba(0, 0, 0, 0.5),
+                0 0 15px rgba(139, 115, 85, 0.2);
+        }
+
+        .companion.required {
+            border-color: #5a7a45;
+            background: linear-gradient(180deg,
+                rgba(60, 80, 45, 0.5) 0%,
+                rgba(35, 50, 25, 0.6) 100%
+            ),
+            linear-gradient(180deg,
+                rgba(50, 40, 30, 0.9) 0%,
+                rgba(30, 25, 18, 0.95) 100%
+            );
+            box-shadow:
+                inset 0 0 20px rgba(90, 140, 60, 0.15),
+                0 0 8px rgba(90, 140, 60, 0.3);
+        }
+
+        .companion.available {
+            border-color: #4a6a8a;
+            background: linear-gradient(180deg,
+                rgba(50, 70, 95, 0.4) 0%,
+                rgba(30, 45, 60, 0.5) 100%
+            ),
+            linear-gradient(180deg,
+                rgba(50, 40, 30, 0.9) 0%,
+                rgba(30, 25, 18, 0.95) 100%
+            );
+            box-shadow:
+                inset 0 0 20px rgba(70, 110, 150, 0.15),
+                0 0 8px rgba(70, 110, 150, 0.25);
+        }
+
+        .companion.unavailable {
+            border-color: #2a2520;
+            opacity: 0.5;
+            background: linear-gradient(180deg,
+                rgba(40, 35, 30, 0.9) 0%,
+                rgba(25, 22, 18, 0.95) 100%
+            );
+        }
+
+        .companion-name {
+            font-family: 'Cinzel', Georgia, serif;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #d4c4a8;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .companion.unavailable .companion-name {
+            color: #7a7065;
+        }
+
+        .companion-state {
+            font-size: 0.7rem;
+            margin-top: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-family: 'Crimson Text', serif;
+        }
+
+        .companion.required .companion-state { color: #8cb068; }
+        .companion.available .companion-state { color: #7a9fc8; }
+        .companion.unavailable .companion-state { color: #5a5550; }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .venture-btn {
+            font-family: 'Cinzel', Georgia, serif;
+            background: linear-gradient(180deg,
+                #6b5a3d 0%,
+                #4a3f2a 30%,
+                #3d3422 70%,
+                #2a2518 100%
+            );
+            color: #c9a85c;
+            border: 2px solid #8b7355;
+            padding: 14px 45px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                inset 0 -2px 5px rgba(0, 0, 0, 0.3),
+                0 4px 10px rgba(0, 0, 0, 0.5);
+            text-shadow: 0 0 10px rgba(201, 168, 92, 0.5);
+            position: relative;
+        }
+
+        .venture-btn::before {
+            content: '';
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            right: 4px;
+            bottom: 4px;
+            border: 1px solid rgba(139, 115, 85, 0.3);
+            pointer-events: none;
+        }
+
+        .venture-btn:hover:not(:disabled) {
+            background: linear-gradient(180deg,
+                #7d6b4a 0%,
+                #5a4d35 30%,
+                #4a3f2a 70%,
+                #3a3020 100%
+            );
+            border-color: #a08565;
+            color: #e0c878;
+            text-shadow: 0 0 15px rgba(224, 200, 120, 0.6);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                inset 0 -2px 5px rgba(0, 0, 0, 0.3),
+                0 6px 20px rgba(0, 0, 0, 0.6),
+                0 0 20px rgba(139, 115, 85, 0.3);
+        }
+
+        .venture-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            color: #7a7065;
+            text-shadow: none;
+        }
+
+        .warning {
+            color: #c47a6a;
+            font-size: 0.9rem;
+            text-align: center;
+            font-style: italic;
+        }
+
+        .party-display {
+            margin-top: 25px;
+            padding-top: 25px;
+            border-top: 1px solid rgba(139, 115, 85, 0.4);
+        }
+
+        .party-title {
+            font-family: 'Cinzel', Georgia, serif;
+            text-align: center;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #c9a85c;
+            margin-bottom: 20px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(201, 168, 92, 0.3);
+        }
+
+        .party-slots {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .party-slot {
+            width: 140px;
+            height: 70px;
+            background: linear-gradient(180deg,
+                rgba(40, 32, 24, 0.95) 0%,
+                rgba(25, 20, 15, 0.98) 100%
+            );
+            border: 2px solid #3d3025;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Cinzel', Georgia, serif;
+            font-weight: 600;
+            font-size: 0.9rem;
+            overflow: hidden;
+            box-shadow:
+                inset 0 0 30px rgba(0, 0, 0, 0.4),
+                0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+
+        .party-slot.revealed {
+            border-color: #8b7355;
+            background: linear-gradient(180deg,
+                rgba(60, 50, 35, 0.95) 0%,
+                rgba(40, 32, 24, 0.98) 100%
+            );
+            animation: slotGlow 0.6s ease;
+            box-shadow:
+                inset 0 0 25px rgba(139, 115, 85, 0.2),
+                0 0 15px rgba(139, 115, 85, 0.4);
+        }
+
+        @keyframes slotGlow {
+            0% {
+                box-shadow:
+                    inset 0 0 30px rgba(201, 168, 92, 0.4),
+                    0 0 30px rgba(201, 168, 92, 0.6);
+            }
+            100% {
+                box-shadow:
+                    inset 0 0 25px rgba(139, 115, 85, 0.2),
+                    0 0 15px rgba(139, 115, 85, 0.4);
+            }
+        }
+
+        .slot-content {
+            text-align: center;
+            color: #d4c4a8;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .slot-content.spinning {
+            animation: slotSpin 0.1s linear infinite;
+            color: #8a7a68;
+        }
+
+        @keyframes slotSpin {
+            0% { transform: translateY(-100%); opacity: 0; }
+            50% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(100%); opacity: 0; }
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>BG3 Party Randomizer</h1>
+        </header>
+
+        <div class="instructions">
+            Click each companion to cycle their status. <strong>Required</strong> companions will always be in your party.
+            <strong>Available</strong> companions may be randomly selected. <strong>Unavailable</strong> companions are excluded
+            (not yet recruited, dead, or otherwise absent).
+        </div>
+
+        <div class="legend">
+            <div class="legend-item"><div class="legend-dot required"></div> Required</div>
+            <div class="legend-item"><div class="legend-dot available"></div> Available</div>
+            <div class="legend-item"><div class="legend-dot unavailable"></div> Unavailable</div>
+        </div>
+
+        <div class="companions-grid" id="companionsGrid"></div>
+
+        <div class="controls">
+            <button class="venture-btn" id="ventureBtn">Venture Forth</button>
+            <div class="warning hidden" id="warning"></div>
+        </div>
+
+        <div class="party-display hidden" id="partyDisplay">
+            <h2 class="party-title">Your Party</h2>
+            <div class="party-slots" id="partySlots"></div>
+        </div>
+    </div>
+
+    <script>
+        const companions = [
+            { name: 'Tav', defaultState: 'required' },
+            { name: 'Shadowheart', defaultState: 'available' },
+            { name: 'Astarion', defaultState: 'available' },
+            { name: 'Gale', defaultState: 'available' },
+            { name: "Lae'zel", defaultState: 'available' },
+            { name: 'Wyll', defaultState: 'available' },
+            { name: 'Karlach', defaultState: 'available' },
+            { name: 'Halsin', defaultState: 'unavailable' },
+            { name: 'Jaheira', defaultState: 'unavailable' },
+            { name: 'Minsc', defaultState: 'unavailable' },
+            { name: 'Minthara', defaultState: 'unavailable' }
+        ];
+
+        const states = ['available', 'required', 'unavailable'];
+        const stateMap = { R: 'required', A: 'available', U: 'unavailable' };
+        const stateToChar = { required: 'R', available: 'A', unavailable: 'U' };
+
+        let companionStates = [];
+
+        function init() {
+            loadStateFromURL();
+            renderCompanions();
+            document.getElementById('ventureBtn').addEventListener('click', randomizeParty);
+        }
+
+        function loadStateFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const stateStr = params.get('s');
+
+            if (stateStr && stateStr.length === companions.length) {
+                companionStates = stateStr.split('').map(char => stateMap[char] || 'available');
+            } else {
+                companionStates = companions.map(c => c.defaultState);
+            }
+        }
+
+        function saveStateToURL() {
+            const stateStr = companionStates.map(s => stateToChar[s]).join('');
+            const url = new URL(window.location);
+            url.searchParams.set('s', stateStr);
+            window.history.replaceState({}, '', url);
+        }
+
+        function renderCompanions() {
+            const grid = document.getElementById('companionsGrid');
+            grid.innerHTML = '';
+
+            companions.forEach((companion, index) => {
+                const div = document.createElement('div');
+                div.className = `companion ${companionStates[index]}`;
+                div.innerHTML = `
+                    <div class="companion-name">${companion.name}</div>
+                    <div class="companion-state">${companionStates[index]}</div>
+                `;
+                div.addEventListener('click', () => toggleState(index));
+                grid.appendChild(div);
+            });
+
+            updateWarning();
+        }
+
+        function toggleState(index) {
+            const currentIndex = states.indexOf(companionStates[index]);
+            companionStates[index] = states[(currentIndex + 1) % states.length];
+            saveStateToURL();
+            renderCompanions();
+        }
+
+        function updateWarning() {
+            const required = companionStates.filter(s => s === 'required').length;
+            const available = companionStates.filter(s => s === 'available').length;
+            const warning = document.getElementById('warning');
+            const btn = document.getElementById('ventureBtn');
+
+            if (required > 4) {
+                warning.textContent = `Too many required companions (${required}). Maximum party size is 4.`;
+                warning.classList.remove('hidden');
+                btn.disabled = true;
+            } else if (required + available < 1) {
+                warning.textContent = 'Need at least one required or available companion.';
+                warning.classList.remove('hidden');
+                btn.disabled = true;
+            } else {
+                warning.classList.add('hidden');
+                btn.disabled = false;
+            }
+        }
+
+        function randomizeParty() {
+            const required = companions.filter((_, i) => companionStates[i] === 'required');
+            const available = companions.filter((_, i) => companionStates[i] === 'available');
+
+            const shuffled = [...available].sort(() => Math.random() - 0.5);
+            const slotsRemaining = Math.max(0, 4 - required.length);
+            const selected = shuffled.slice(0, slotsRemaining);
+            const party = [...required, ...selected];
+
+            animateSlotMachine(party);
+        }
+
+        function animateSlotMachine(party) {
+            const display = document.getElementById('partyDisplay');
+            const slots = document.getElementById('partySlots');
+            display.classList.remove('hidden');
+
+            const allNames = companions.filter((_, i) => companionStates[i] !== 'unavailable').map(c => c.name);
+
+            slots.innerHTML = party.map(() => `
+                <div class="party-slot">
+                    <div class="slot-content spinning">...</div>
+                </div>
+            `).join('');
+
+            const slotElements = slots.querySelectorAll('.party-slot');
+
+            slotElements.forEach((slot, index) => {
+                const content = slot.querySelector('.slot-content');
+                let spinCount = 0;
+                const maxSpins = 20 + index * 10;
+
+                const spinInterval = setInterval(() => {
+                    content.textContent = allNames[Math.floor(Math.random() * allNames.length)];
+                    spinCount++;
+
+                    if (spinCount >= maxSpins) {
+                        clearInterval(spinInterval);
+                        content.classList.remove('spinning');
+                        content.textContent = party[index].name;
+                        slot.classList.add('revealed');
+                    }
+                }, 80);
+            });
+        }
+
+        init();
+    </script>
+</body>
+</html>

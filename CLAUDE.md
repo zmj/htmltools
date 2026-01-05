@@ -1,0 +1,1 @@
+This repository will contain multiple unrelated single-file HTML pages that implement some specific utility. "Single-file" means inline javascript and styles - no references to other files in this repository. Importing javascript dependencies from CDNs is allowed when it substantially simplifies the implementation. Store non-secret application state in URLs, size permitting.
