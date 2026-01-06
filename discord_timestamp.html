@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Timestamp Generator</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #36393f;
+      color: #dcddde;
+      margin: 0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #fff;
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #96989d;
+      font-size: 0.875rem;
+      margin-bottom: 24px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    input[type="date"],
+    input[type="time"] {
+      background: #202225;
+      border: 1px solid #40444b;
+      border-radius: 4px;
+      color: #dcddde;
+      padding: 10px 12px;
+      font-size: 1rem;
+      outline: none;
+    }
+
+    input[type="date"]:focus,
+    input[type="time"]:focus {
+      border-color: #5865f2;
+    }
+
+    input[type="date"] {
+      flex: 1;
+    }
+
+    input[type="time"] {
+      width: 130px;
+    }
+
+    .primary-output {
+      background: #202225;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.15s;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      min-height: 77px;
+    }
+
+    .primary-output:hover {
+      background: #2f3136;
+    }
+
+    .primary-preview {
+      color: #5865f2;
+      font-weight: 500;
+    }
+
+    .primary-preview.time-only {
+      font-size: 1.75rem;
+    }
+
+    .primary-preview.date-time {
+      font-size: 1.25rem;
+    }
+
+    .primary-timestamp {
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 1.125rem;
+      color: #96989d;
+    }
+
+    .copied-tooltip {
+      position: absolute;
+      background: #3ba55d;
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s;
+      top: -28px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .copied-tooltip.show {
+      opacity: 1;
+    }
+
+    .secondary-label {
+      color: #96989d;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+
+    .formats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+    }
+
+    .format-card {
+      background: #202225;
+      border-radius: 6px;
+      padding: 12px;
+      cursor: pointer;
+      position: relative;
+      transition: background 0.15s;
+    }
+
+    .format-card:hover {
+      background: #2f3136;
+    }
+
+    .format-code {
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 0.75rem;
+      color: #96989d;
+      margin-bottom: 4px;
+    }
+
+    .format-preview {
+      color: #5865f2;
+      font-size: 0.875rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .format-name {
+      color: #72767d;
+      font-size: 0.625rem;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Discord Timestamp Generator</h1>
+    <p class="subtitle">Pick a time, get a Discord timestamp. Auto-copies on change.</p>
+
+    <div class="input-row">
+      <input type="date" id="dateInput">
+      <input type="time" id="timeInput">
+    </div>
+
+    <div class="primary-output" id="primaryDisplay" onclick="copyTimestamp(this, getPrimaryFormat())">
+      <span class="copied-tooltip">Copied!</span>
+      <div class="primary-preview" id="primaryPreview"></div>
+      <div class="primary-timestamp" id="primaryTimestamp"></div>
+    </div>
+
+    <div class="secondary-label">Other formats</div>
+    <div class="formats-grid" id="formatsGrid"></div>
+  </div>
+
+  <script>
+    const formats = [
+      { code: 't', name: 'Short Time', example: '9:30 PM' },
+      { code: 'T', name: 'Long Time', example: '9:30:00 PM' },
+      { code: 'd', name: 'Short Date', example: '01/06/2026' },
+      { code: 'D', name: 'Long Date', example: 'January 6, 2026' },
+      { code: 'f', name: 'Short Date/Time', example: 'January 6, 2026 9:30 PM' },
+      { code: 'F', name: 'Long Date/Time', example: 'Monday, January 6, 2026 9:30 PM' },
+      { code: 'R', name: 'Relative', example: 'in 2 hours' }
+    ];
+
+    const dateInput = document.getElementById('dateInput');
+    const timeInput = document.getElementById('timeInput');
+    const primaryTimestamp = document.getElementById('primaryTimestamp');
+    const primaryPreview = document.getElementById('primaryPreview');
+    const formatsGrid = document.getElementById('formatsGrid');
+
+    function getDefaultTime() {
+      const now = new Date();
+      const defaultTime = new Date(now);
+      defaultTime.setMinutes(0, 0, 0);
+      defaultTime.setHours(defaultTime.getHours() + 2);
+      return defaultTime;
+    }
+
+    function formatDateInput(date) {
+      return date.toISOString().split('T')[0];
+    }
+
+    function formatTimeInput(date) {
+      return date.toTimeString().slice(0, 5);
+    }
+
+    function getSelectedTimestamp() {
+      const date = dateInput.value;
+      const time = timeInput.value;
+      if (!date || !time) return null;
+      return Math.floor(new Date(`${date}T${time}`).getTime() / 1000);
+    }
+
+    function isToday(timestamp) {
+      const selected = new Date(timestamp * 1000);
+      const now = new Date();
+      return selected.toDateString() === now.toDateString();
+    }
+
+    function getPrimaryFormat() {
+      const timestamp = getSelectedTimestamp();
+      if (!timestamp) return 't';
+      return isToday(timestamp) ? 't' : 'f';
+    }
+
+    function getDiscordString(timestamp, format) {
+      return `<t:${timestamp}:${format}>`;
+    }
+
+    function formatPreview(timestamp, format) {
+      const date = new Date(timestamp * 1000);
+      const options = { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+
+      switch (format) {
+        case 't':
+          return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        case 'T':
+          return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+        case 'd':
+          return date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: 'numeric' });
+        case 'D':
+          return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+        case 'f':
+          return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) + ' ' +
+                 date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        case 'F':
+          return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) + ' ' +
+                 date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        case 'R':
+          return formatRelative(timestamp);
+        default:
+          return '';
+      }
+    }
+
+    function formatRelative(timestamp) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = timestamp - now;
+      const absDiff = Math.abs(diff);
+
+      if (absDiff < 60) return diff >= 0 ? 'in a few seconds' : 'a few seconds ago';
+      if (absDiff < 3600) {
+        const mins = Math.floor(absDiff / 60);
+        return diff >= 0 ? `in ${mins} minute${mins > 1 ? 's' : ''}` : `${mins} minute${mins > 1 ? 's' : ''} ago`;
+      }
+      if (absDiff < 86400) {
+        const hours = Math.floor(absDiff / 3600);
+        return diff >= 0 ? `in ${hours} hour${hours > 1 ? 's' : ''}` : `${hours} hour${hours > 1 ? 's' : ''} ago`;
+      }
+      const days = Math.floor(absDiff / 86400);
+      return diff >= 0 ? `in ${days} day${days > 1 ? 's' : ''}` : `${days} day${days > 1 ? 's' : ''} ago`;
+    }
+
+    function showTooltip(element) {
+      const tooltip = element.querySelector('.copied-tooltip');
+      if (tooltip) {
+        tooltip.classList.add('show');
+        setTimeout(() => tooltip.classList.remove('show'), 1000);
+      }
+    }
+
+    async function copyTimestamp(element, format) {
+      const timestamp = getSelectedTimestamp();
+      if (!timestamp) return;
+
+      const text = getDiscordString(timestamp, format);
+      try {
+        await navigator.clipboard.writeText(text);
+        showTooltip(element);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    }
+
+    function updateDisplay() {
+      const timestamp = getSelectedTimestamp();
+      if (!timestamp) return;
+
+      const primaryFormat = getPrimaryFormat();
+      primaryTimestamp.textContent = getDiscordString(timestamp, primaryFormat);
+      primaryPreview.textContent = formatPreview(timestamp, primaryFormat);
+      primaryPreview.className = 'primary-preview ' + (primaryFormat === 't' ? 'time-only' : 'date-time');
+
+      formatsGrid.innerHTML = '';
+      formats.filter(({ code }) => code !== primaryFormat).forEach(({ code, name }) => {
+        const card = document.createElement('div');
+        card.className = 'format-card';
+        card.innerHTML = `
+          <span class="copied-tooltip">Copied!</span>
+          <div class="format-code">${getDiscordString(timestamp, code)}</div>
+          <div class="format-preview">${formatPreview(timestamp, code)}</div>
+          <div class="format-name">${name}</div>
+        `;
+        card.onclick = () => copyTimestamp(card, code);
+        formatsGrid.appendChild(card);
+      });
+
+      saveStateToURL(timestamp);
+    }
+
+    async function autoCopy() {
+      const timestamp = getSelectedTimestamp();
+      if (!timestamp) return;
+
+      const format = getPrimaryFormat();
+      const text = getDiscordString(timestamp, format);
+      try {
+        await navigator.clipboard.writeText(text);
+        showTooltip(document.getElementById('primaryDisplay'));
+      } catch (err) {
+        console.error('Failed to auto-copy:', err);
+      }
+    }
+
+    function saveStateToURL(timestamp) {
+      const url = new URL(window.location);
+      url.searchParams.set('t', timestamp);
+      window.history.replaceState({}, '', url);
+    }
+
+    function loadStateFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const timestamp = params.get('t');
+      if (timestamp) {
+        const date = new Date(parseInt(timestamp) * 1000);
+        if (!isNaN(date.getTime())) {
+          return date;
+        }
+      }
+      return null;
+    }
+
+    function init() {
+      const savedDate = loadStateFromURL();
+      const initialDate = savedDate || getDefaultTime();
+
+      dateInput.value = formatDateInput(initialDate);
+      timeInput.value = formatTimeInput(initialDate);
+
+      updateDisplay();
+
+      dateInput.addEventListener('change', () => {
+        updateDisplay();
+        autoCopy();
+      });
+
+      timeInput.addEventListener('change', () => {
+        updateDisplay();
+        autoCopy();
+      });
+
+      timeInput.focus();
+    }
+
+    init();
+  </script>
+</body>
+</html>
