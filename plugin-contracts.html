@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plugin Contracts Dashboard</title>
+  <style>
+    :root {
+      --bg: #1a1b26;
+      --surface: #24283b;
+      --text: #c0caf5;
+      --muted: #565f89;
+      --accent: #7aa2f7;
+      --penguin: #7dcfff;
+      --penguin-bg: rgba(125, 207, 255, 0.08);
+      --check: #9ece6a;
+      --miss: #f7768e;
+      --empty: #292e42;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      background: var(--bg);
+      color: var(--text);
+      padding: 1.25rem;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .penguin-badge {
+      background: var(--penguin-bg);
+      border: 1px solid var(--penguin);
+      color: var(--penguin);
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .stats {
+      margin-left: auto;
+      display: flex;
+      gap: 1.25rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .stats span { color: var(--text); }
+    .table-wrap {
+      border-radius: 8px;
+      border: 1px solid var(--surface);
+      width: fit-content;
+    }
+    table {
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    th, td {
+      padding: 0.4rem 0.6rem;
+      text-align: center;
+      border: 1px solid var(--surface);
+    }
+    th {
+      background: var(--surface);
+      font-weight: 500;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      white-space: nowrap;
+    }
+    thead th:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 20;
+      text-align: left;
+    }
+    th.penguin-col {
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(125, 207, 255, 0.15) 100%);
+      border-bottom: 2px solid var(--penguin);
+    }
+    .contract-header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.2rem;
+    }
+    .contract-name {
+      font-weight: 500;
+    }
+    .contract-count {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .service-name {
+      text-align: left;
+      font-weight: 500;
+      white-space: nowrap;
+      position: sticky;
+      left: 0;
+      background: var(--bg);
+      z-index: 5;
+    }
+    tr:hover .service-name {
+      background: var(--surface);
+    }
+    tr:hover td {
+      background: var(--surface);
+    }
+    td.penguin-col {
+      background: var(--penguin-bg);
+    }
+    tr:hover td.penguin-col {
+      background: rgba(125, 207, 255, 0.15);
+    }
+    .check {
+      color: var(--check);
+      font-size: 1rem;
+    }
+    .miss {
+      color: var(--miss);
+      font-size: 0.9rem;
+      opacity: 0.7;
+    }
+    .empty {
+      color: var(--empty);
+    }
+    .service-name .count {
+      color: var(--muted);
+      font-size: 0.75rem;
+      margin-left: 0.4rem;
+    }
+    .service-name.is-antarctica {
+      color: var(--penguin);
+    }
+    tr.antarctica-row {
+      background: var(--penguin-bg);
+    }
+    tr.antarctica-row .service-name {
+      background: var(--penguin-bg);
+    }
+    tr.antarctica-row:hover .service-name,
+    tr.antarctica-row:hover td {
+      background: rgba(125, 207, 255, 0.15);
+    }
+    .legend {
+      margin-top: 1rem;
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    footer {
+      margin-top: 1.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    @media (max-width: 600px) {
+      body { padding: 0.75rem; }
+      h1 { font-size: 1.1rem; }
+      .stats { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Plugin Contracts Matrix</h1>
+    <div class="penguin-badge">🐧 antarctica baseline</div>
+    <div class="stats">
+      <div><span id="service-count">0</span> plugins</div>
+      <div><span id="contract-count">0</span> contracts</div>
+    </div>
+  </header>
+  <div class="table-wrap">
+    <table id="matrix"></table>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><span class="check">✓</span> implements</div>
+    <div class="legend-item"><span class="miss">✗</span> missing (antarctica has it)</div>
+    <div class="legend-item"><span class="empty">·</span> not applicable</div>
+  </div>
+  <footer>
+    Data from <a href="https://discovery-proxy.zmj.workers.dev/" target="_blank">discovery.json</a>
+  </footer>
+
+  <script>
+    // Override via ?data=URL parameter if needed
+    const DATA_URL = new URLSearchParams(location.search).get('data') || 'https://discovery-proxy.zmj.workers.dev/';
+
+    async function loadData() {
+      const resp = await fetch(DATA_URL);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      return data.plugins;
+    }
+
+    function buildMatrix(plugins) {
+      // Extract service -> contracts mapping
+      const services = plugins.map(p => ({
+        name: p.name,
+        contracts: new Set((p.contractsImplemented || []).map(c => c.name))
+      }));
+
+      // Get all unique contracts
+      const allContracts = [...new Set(services.flatMap(s => [...s.contracts]))];
+
+      // Get antarctica's contracts for highlighting
+      const antarcticaService = services.find(s => s.name === 'antarctica');
+      const antarcticaContracts = antarcticaService ? antarcticaService.contracts : new Set();
+
+      // Count implementations per contract
+      const contractCounts = {};
+      allContracts.forEach(c => {
+        contractCounts[c] = services.filter(s => s.contracts.has(c)).length;
+      });
+
+      // Sort contracts by density (most implementations first), then alphabetically
+      const sortedContracts = [...allContracts].sort((a, b) =>
+        contractCounts[b] - contractCounts[a] || a.localeCompare(b)
+      );
+
+      // Sort services by density (most contracts first), then alphabetically
+      const sortedServices = [...services].sort((a, b) =>
+        b.contracts.size - a.contracts.size || a.name.localeCompare(b.name)
+      );
+
+      return { sortedServices, sortedContracts, antarcticaContracts, contractCounts };
+    }
+
+    function renderTable({ sortedServices, sortedContracts, antarcticaContracts, contractCounts }) {
+      const table = document.getElementById('matrix');
+
+      // Update stats
+      document.getElementById('service-count').textContent = sortedServices.length;
+      document.getElementById('contract-count').textContent = sortedContracts.length;
+
+      // Build header
+      let html = '<thead><tr><th></th>';
+      sortedContracts.forEach(c => {
+        const isPenguin = antarcticaContracts.has(c);
+        html += `<th class="${isPenguin ? 'penguin-col' : ''}"><div class="contract-header"><span class="contract-name">${c}</span><span class="contract-count">${contractCounts[c]}</span></div></th>`;
+      });
+      html += '</tr></thead><tbody>';
+
+      // Build rows
+      sortedServices.forEach(service => {
+        const isAntarctica = service.name === 'antarctica';
+        html += `<tr class="${isAntarctica ? 'antarctica-row' : ''}">`;
+        html += `<td class="service-name ${isAntarctica ? 'is-antarctica' : ''}">${service.name}<span class="count">${service.contracts.size}</span></td>`;
+
+        sortedContracts.forEach(c => {
+          const isPenguin = antarcticaContracts.has(c);
+          const has = service.contracts.has(c);
+          let cell;
+          if (has) {
+            cell = '<span class="check">✓</span>';
+          } else if (isPenguin) {
+            cell = '<span class="miss">✗</span>';
+          } else {
+            cell = '<span class="empty">·</span>';
+          }
+          html += `<td class="${isPenguin ? 'penguin-col' : ''}">${cell}</td>`;
+        });
+        html += '</tr>';
+      });
+
+      html += '</tbody>';
+      table.innerHTML = html;
+    }
+
+    async function init() {
+      try {
+        const plugins = await loadData();
+        const matrix = buildMatrix(plugins);
+        renderTable(matrix);
+      } catch (e) {
+        document.getElementById('matrix').innerHTML = `<tr><td style="color:#f7768e;padding:2rem;">Failed to load data: ${e.message}</td></tr>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
