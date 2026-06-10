@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Jigsaw Puzzle</title>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 14px/1.4 system-ui, sans-serif; color: #dde3ee;
+    background: radial-gradient(1200px 800px at 50% 38%, #2a3140, #171b24 70%, #11141b); }
+  #board { position: fixed; inset: 0; touch-action: none; cursor: grab; }
+  #board.drag { cursor: grabbing; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; z-index: 5; display: flex; gap: 6px; align-items: center;
+    flex-wrap: wrap; padding: 6px 10px; background: #1c2230cc; backdrop-filter: blur(8px); user-select: none; }
+  #bar b { margin-right: 4px; }
+  .btn { font: inherit; color: #dde3ee; background: #313a4e; border: 1px solid #495571; border-radius: 6px;
+    padding: 4px 10px; cursor: pointer; }
+  .btn:hover { background: #3c4760; }
+  .btn.big { padding: 10px 18px; font-size: 16px; }
+  label.btn { display: inline-flex; gap: 5px; align-items: center; }
+  select.btn { padding: 4px 6px; }
+  #stat { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; opacity: .9; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: #0d1018b8; }
+  .card { background: #222a3a; border: 1px solid #3a4560; border-radius: 14px; padding: 28px 34px; max-width: 520px;
+    text-align: center; box-shadow: 0 20px 60px #000a; }
+  .card h1 { margin: 0 0 10px; font-size: 26px; }
+  .card p { margin: 10px 0; }
+  .hint { font-size: 12px; opacity: .65; }
+  #dropHint { position: fixed; inset: 12px; z-index: 20; border: 3px dashed #7ea0e0; border-radius: 16px;
+    background: #1a2335cc; display: flex; align-items: center; justify-content: center; font-size: 22px;
+    pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="board"></canvas>
+
+<div id="bar">
+  <b>🧩 Jigsaw</b>
+  <button id="pickBtn" class="btn" title="Choose a new image">Image…</button>
+  <select id="countSel" class="btn" title="Number of pieces"></select>
+  <label class="btn" title="Allow piece rotation (double-click / right-click / scroll to rotate)">
+    <input type="checkbox" id="rotChk">↻</label>
+  <button id="cutBtn" class="btn" title="Re-slice with a new random cut">New cut</button>
+  <button id="scatterBtn" class="btn" title="Scatter the pieces again">Scatter</button>
+  <button id="peekBtn" class="btn" title="Hold to preview the image (or hold P)">👁</button>
+  <button id="muteBtn" class="btn" title="Toggle sound">🔊</button>
+  <span id="stat"></span>
+</div>
+
+<div id="start" class="overlay">
+  <div class="card">
+    <h1>🧩 Jigsaw Puzzle</h1>
+    <p>Drop, paste, or choose an image and it gets sliced into a puzzle sized for your screen.</p>
+    <p>
+      <button id="pickBtn2" class="btn big">Choose image</button>
+      <button id="sampleBtn" class="btn big">Try a sample</button>
+    </p>
+    <p class="hint">Drag pieces to move · double-click / double-tap, right-click, scroll, or press R to rotate ·
+      matching pieces snap together · hold 👁 to peek</p>
+  </div>
+</div>
+
+<div id="win" class="overlay" hidden>
+  <div class="card">
+    <h1>Solved! 🎉</h1>
+    <p id="winStats"></p>
+    <p>
+      <button id="againBtn" class="btn big">New cut</button>
+      <button id="newImgBtn" class="btn big">New image</button>
+    </p>
+  </div>
+</div>
+
+<div id="dropHint" hidden>Drop image to start</div>
+<input type="file" id="fileInp" accept="image/*" hidden>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('board'), ctx = canvas.getContext('2d');
+const hit = document.createElement('canvas').getContext('2d');
+const DPR = () => Math.min(devicePixelRatio || 1, 2);
+const barH = () => ($('bar').offsetHeight || 48);
+
+// ---------- seeded rng ----------
+const mulberry32 = s => () => {
+  s |= 0; s = s + 0x6D2B79F5 | 0;
+  let t = Math.imul(s ^ s >>> 15, 1 | s);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+};
+const randSeed = () => (Math.random() * 0x7fffffff) | 0;
+
+// ---------- url-persisted settings (image itself can't fit in a URL) ----------
+const url = { seed: null, n: 'auto', rot: true };
+{
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (p.get('seed')) url.seed = +p.get('seed') | 0;
+  const n = p.get('n');
+  if (n && n !== 'auto' && +n >= 4) url.n = Math.min(600, +n | 0);
+  if (p.get('rot')) url.rot = p.get('rot') !== '0';
+}
+if (url.seed == null) url.seed = randSeed();
+function writeURL() {
+  const p = new URLSearchParams();
+  p.set('seed', url.seed); p.set('n', url.n); p.set('rot', url.rot ? 1 : 0);
+  history.replaceState(null, '', '#' + p);
+}
+
+// ---------- state ----------
+const S = {
+  img: null, board: null, pieces: [], groups: [], z: [], tol: 14,
+  drag: null, lastPtr: { x: 0, y: 0 }, peek: false,
+  started: false, startT: 0, endT: 0, solved: false,
+  flashes: [], confetti: [], winTween: null,
+};
+let muted = localStorage.getItem('jigsaw-muted') === '1';
+let dirty = true;
+
+// ---------- geometry helpers ----------
+// rotate a point by k*90deg clockwise (screen coords, y down)
+function rotP(x, y, k) {
+  k = ((k % 4) + 4) % 4;
+  return k === 0 ? [x, y] : k === 1 ? [-y, x] : k === 2 ? [-x, -y] : [y, -x];
+}
+
+// Classic jigsaw tab: 3 cubic Beziers in edge-local coords (u along the edge,
+// v along its normal, both in units of edge length), with bounded random
+// tab direction, size, position, and asymmetry.
+function tabEdge(p0, p1, rng) {
+  const s = rng() < 0.5 ? -1 : 1;        // which side the tab bulges toward
+  const t = 0.09 + rng() * 0.025;        // tab scale (bulb height ~2.5t)
+  const j = 0.04;
+  const a = (rng() * 2 - 1) * j, b = (rng() * 2 - 1) * j, c = (rng() * 2 - 1) * j;
+  const d = (rng() * 2 - 1) * j, e = (rng() * 2 - 1) * j;
+  const P = [
+    [0.2, a], [0.5 + b + d, -t + c], [0.5 - t + b, t + c],
+    [0.5 - 2 * t + b - d, 3 * t + c], [0.5 + 2 * t + b - d, 3 * t + c], [0.5 + t + b, t + c],
+    [0.5 + b + d, -t + c], [0.8, e], [1, 0],
+  ];
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  const W = ([u, v0]) => {
+    const v = v0 * s;
+    return { x: p0.x + u * dx - v * dy, y: p0.y + u * dy + v * dx };
+  };
+  const segs = [];
+  for (let i = 0; i < 9; i += 3) segs.push([W(P[i]), W(P[i + 1]), W(P[i + 2])]);
+  return { p0, p1, segs };
+}
+
+function appendF(path, e) {
+  if (!e.segs) { path.lineTo(e.p1.x, e.p1.y); return; }
+  for (const s of e.segs) path.bezierCurveTo(s[0].x, s[0].y, s[1].x, s[1].y, s[2].x, s[2].y);
+}
+function appendB(path, e) {
+  if (!e.segs) { path.lineTo(e.p0.x, e.p0.y); return; }
+  for (let i = e.segs.length - 1; i >= 0; i--) {
+    const s = e.segs[i], prev = i ? e.segs[i - 1][2] : e.p0;
+    path.bezierCurveTo(s[1].x, s[1].y, s[0].x, s[0].y, prev.x, prev.y);
+  }
+}
+function bboxOf(edges) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  const add = p => {
+    if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y;
+    if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y;
+  };
+  for (const e of edges) {
+    add(e.p0); add(e.p1);
+    if (e.segs) for (const sg of e.segs) sg.forEach(add);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+// ---------- puzzle generation ----------
+function gridFor(imgW, imgH) {
+  const phone = Math.min(innerWidth, innerHeight) < 640;
+  const fw = innerWidth * (phone ? 0.92 : 0.78);
+  const fh = (innerHeight - barH()) * (phone ? 0.62 : 0.72);
+  const sc = Math.min(fw / imgW, fh / imgH);
+  const bw = imgW * sc, bh = imgH * sc;
+  let cols, rows;
+  if (url.n === 'auto') {
+    const cell = phone ? 88 : 104;
+    cols = Math.round(bw / cell); rows = Math.round(bh / cell);
+  } else {
+    cols = Math.round(Math.sqrt(url.n * bw / bh));
+    rows = Math.round(url.n / Math.max(1, cols));
+  }
+  cols = Math.max(2, Math.min(40, cols || 2));
+  rows = Math.max(2, Math.min(40, rows || 2));
+  return { w: bw, h: bh, cols, rows, cw: bw / cols, ch: bh / rows };
+}
+
+function generatePuzzle() {
+  const img = S.img;
+  if (!img) return;
+  const B = S.board = gridFor(img.width, img.height);
+  const { cols, rows, cw, ch } = B;
+  const rng = mulberry32(url.seed);
+
+  // grid vertices, jittered except along the border
+  const V = [];
+  const jx = cw * 0.11, jy = ch * 0.11;
+  for (let r = 0; r <= rows; r++) {
+    V[r] = [];
+    for (let c = 0; c <= cols; c++) {
+      let x = c * cw, y = r * ch;
+      if (c > 0 && c < cols) x += (rng() * 2 - 1) * jx;
+      if (r > 0 && r < rows) y += (rng() * 2 - 1) * jy;
+      V[r][c] = { x, y };
+    }
+  }
+
+  // edges: straight on the border, tabbed inside; both neighbors share the
+  // same curve so they interlock exactly
+  const hE = [], vE = [];
+  for (let r = 0; r <= rows; r++) {
+    hE[r] = [];
+    for (let c = 0; c < cols; c++)
+      hE[r][c] = (r === 0 || r === rows)
+        ? { p0: V[r][c], p1: V[r][c + 1], segs: null }
+        : tabEdge(V[r][c], V[r][c + 1], rng);
+  }
+  for (let r = 0; r < rows; r++) {
+    vE[r] = [];
+    for (let c = 0; c <= cols; c++)
+      vE[r][c] = (c === 0 || c === cols)
+        ? { p0: V[r][c], p1: V[r + 1][c], segs: null }
+        : tabEdge(V[r][c], V[r + 1][c], rng);
+  }
+
+  S.pieces = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const top = hE[r][c], right = vE[r][c + 1], bottom = hE[r + 1][c], left = vE[r][c];
+    const path = new Path2D();
+    path.moveTo(top.p0.x, top.p0.y);
+    appendF(path, top); appendF(path, right); appendB(path, bottom); appendB(path, left);
+    path.closePath();
+    S.pieces.push({
+      r, c, path, bb: bboxOf([top, right, bottom, left]),
+      cx: (c + 0.5) * cw, cy: (r + 0.5) * ch,
+      sprite: null, sm: 8, group: null, neighbors: [],
+    });
+  }
+  const at = (r, c) => (r < 0 || c < 0 || r >= rows || c >= cols) ? null : S.pieces[r * cols + c];
+  for (const p of S.pieces)
+    p.neighbors = [at(p.r - 1, p.c), at(p.r + 1, p.c), at(p.r, p.c - 1), at(p.r, p.c + 1)].filter(Boolean);
+
+  S.tol = Math.max(10, Math.min(26, Math.min(cw, ch) * 0.3));
+  makeSprites();
+  scatter();
+  writeURL();
+}
+
+function makeSprites() {
+  const B = S.board, img = S.img;
+  const SS = S.pieces.length > 180 ? Math.min(DPR(), 1.5) : DPR();
+  for (const p of S.pieces) {
+    const m = p.sm, w = p.bb.w + 2 * m, h = p.bb.h + 2 * m;
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.ceil(w * SS));
+    cv.height = Math.max(1, Math.ceil(h * SS));
+    const g = cv.getContext('2d');
+    g.scale(SS, SS);
+    g.translate(m - p.bb.x, m - p.bb.y);
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 5; g.shadowOffsetY = 2;
+    g.fillStyle = '#000'; g.fill(p.path);
+    g.restore();
+    g.save();
+    g.clip(p.path);
+    g.drawImage(img, 0, 0, img.width, img.height, 0, 0, B.w, B.h);
+    g.lineWidth = 2.5;
+    g.save(); g.translate(1, 1); g.strokeStyle = 'rgba(255,255,255,.35)'; g.stroke(p.path); g.restore();
+    g.save(); g.translate(-1, -1); g.strokeStyle = 'rgba(0,0,0,.35)'; g.stroke(p.path); g.restore();
+    g.restore();
+    g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(p.path);
+    p.sprite = cv;
+  }
+}
+
+function scatter() {
+  const n = S.pieces.length;
+  const top = barH() + 8;
+  const pw = innerWidth, ph = innerHeight - top;
+  const cell = Math.sqrt(pw * ph / n);
+  const cols = Math.max(1, Math.floor(pw / cell));
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const slots = [];
+  for (let i = 0; i < n; i++) {
+    slots.push({
+      x: ((i % cols) + 0.5) * (pw / cols),
+      y: top + (Math.floor(i / cols) + 0.5) * (ph / rows),
+    });
+  }
+  for (let i = slots.length - 1; i > 0; i--) {
+    const k = (Math.random() * (i + 1)) | 0;
+    [slots[i], slots[k]] = [slots[k], slots[i]];
+  }
+  S.groups = []; S.z = []; S.flashes = []; S.confetti = []; S.winTween = null;
+  S.pieces.forEach((p, i) => {
+    const rot = url.rot ? (Math.random() * 4) | 0 : 0;
+    const cx = slots[i].x + (Math.random() - 0.5) * cell * 0.5;
+    const cy = slots[i].y + (Math.random() - 0.5) * cell * 0.4;
+    const [rx, ry] = rotP(p.cx, p.cy, rot);
+    const g = { T: { x: cx - rx, y: cy - ry }, rotCount: rot, dispRot: rot * 90, pieces: [p] };
+    p.group = g;
+    S.groups.push(g);
+    S.z.push(p);
+  });
+  S.started = false; S.solved = false; S.startT = 0; S.endT = 0; S.drag = null;
+  $('win').hidden = true;
+  updateStat();
+  dirty = true;
+}
+
+// ---------- groups, snapping ----------
+function bringToFront(g) {
+  const mine = S.z.filter(p => p.group === g);
+  S.z = S.z.filter(p => p.group !== g).concat(mine);
+  dirty = true;
+}
+
+function groupCenter(g) {
+  let x = 0, y = 0;
+  for (const p of g.pieces) {
+    const [rx, ry] = rotP(p.cx, p.cy, g.rotCount);
+    x += g.T.x + rx; y += g.T.y + ry;
+  }
+  return { x: x / g.pieces.length, y: y / g.pieces.length };
+}
+
+function rotateGroup(g, dir, pivot) {
+  const dx = g.T.x - pivot.x, dy = g.T.y - pivot.y;
+  if (dir > 0) { g.T.x = pivot.x - dy; g.T.y = pivot.y + dx; }
+  else { g.T.x = pivot.x + dy; g.T.y = pivot.y - dx; }
+  g.rotCount += dir;
+  if (!S.drag || S.drag.g !== g) trySnap(g);
+  dirty = true;
+}
+
+// Two groups with equal orientation are correctly placed relative to each
+// other exactly when their translations match, so snap distance is |Tg - Th|.
+function trySnap(g) {
+  if (!S.groups.includes(g)) return g;
+  let target = g, again = true;
+  while (again) {
+    again = false;
+    outer:
+    for (const p of target.pieces) for (const q of p.neighbors) {
+      const h = q.group;
+      if (h === target) continue;
+      if ((((target.rotCount - h.rotCount) % 4) + 4) % 4 !== 0) continue;
+      if (Math.hypot(target.T.x - h.T.x, target.T.y - h.T.y) > S.tol) continue;
+      for (const t of target.pieces) { t.group = h; h.pieces.push(t); }
+      target.pieces = [];
+      S.groups.splice(S.groups.indexOf(target), 1);
+      S.flashes.push({ pieces: [...h.pieces], t: performance.now() });
+      clickSound();
+      target = h;
+      again = true;
+      break outer;
+    }
+  }
+  if (target !== g) bringToFront(target);
+  updateStat();
+  dirty = true;
+  if (S.groups.length === 1 && S.pieces.length > 1 && !S.solved) onWin();
+  return target;
+}
+
+function clampGroup(g) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const p of g.pieces) {
+    const [rx, ry] = rotP(p.cx, p.cy, g.rotCount);
+    const x = g.T.x + rx, y = g.T.y + ry;
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+  }
+  const m = 30, top = barH();
+  let dx = 0, dy = 0;
+  if (x1 < m) dx = m - x1;
+  if (x0 > innerWidth - m) dx = innerWidth - m - x0;
+  if (y1 < top + m) dy = top + m - y1;
+  if (y0 > innerHeight - m) dy = innerHeight - m - y0;
+  g.T.x += dx; g.T.y += dy;
+}
+
+function onWin() {
+  S.solved = true;
+  S.endT = performance.now();
+  const g = S.groups[0], B = S.board;
+  const k = Math.round(g.rotCount / 4) * 4;
+  S.winTween = {
+    g, t0: performance.now(), dur: 700,
+    from: { x: g.T.x, y: g.T.y, rot: g.dispRot },
+    to: { x: (innerWidth - B.w) / 2, y: barH() + (innerHeight - barH() - B.h) / 2, rot: k * 90 },
+  };
+  g.rotCount = k;
+  winSound();
+  for (let i = 0; i < 140; i++) S.confetti.push({
+    x: Math.random() * innerWidth, y: -20 - Math.random() * innerHeight * 0.3,
+    vx: (Math.random() - 0.5) * 60, vy: 60 + Math.random() * 140,
+    s: 4 + Math.random() * 5, h: (Math.random() * 360) | 0,
+    rot: Math.random() * 6, vr: (Math.random() - 0.5) * 8,
+  });
+  updateStat();
+  setTimeout(() => {
+    $('winStats').textContent = `${S.pieces.length} pieces · ${fmtTime(S.endT - S.startT)}`;
+    $('win').hidden = false;
+  }, 1000);
+  dirty = true;
+}
+
+// ---------- input ----------
+function pieceAt(x, y) {
+  for (let i = S.z.length - 1; i >= 0; i--) {
+    const p = S.z[i], g = p.group;
+    const [ux, uy] = rotP(x - g.T.x, y - g.T.y, -g.rotCount);
+    if (hit.isPointInPath(p.path, ux, uy)) return p;
+  }
+  return null;
+}
+
+let lastTap = { t: 0, x: 0, y: 0 };
+canvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  initAudio();
+  const x = e.clientX, y = e.clientY;
+  S.lastPtr = { x, y };
+  const now = performance.now();
+  const dbl = now - lastTap.t < 350 && Math.hypot(x - lastTap.x, y - lastTap.y) < 28;
+  lastTap = { t: now, x, y };
+  if (S.solved) return;
+  const p = pieceAt(x, y);
+  if (!p) return;
+  if (!S.started) { S.started = true; S.startT = now; }
+  bringToFront(p.group);
+  if (dbl && url.rot) { rotateGroup(p.group, 1, { x, y }); lastTap.t = 0; }
+  const g = p.group;
+  S.drag = { g, off: { x: x - g.T.x, y: y - g.T.y }, id: e.pointerId };
+  canvas.setPointerCapture(e.pointerId);
+  canvas.classList.add('drag');
+});
+
+canvas.addEventListener('pointermove', e => {
+  S.lastPtr = { x: e.clientX, y: e.clientY };
+  if (!S.drag || e.pointerId !== S.drag.id) return;
+  S.drag.g.T.x = e.clientX - S.drag.off.x;
+  S.drag.g.T.y = e.clientY - S.drag.off.y;
+  dirty = true;
+});
+
+function endDrag(e) {
+  if (!S.drag || e.pointerId !== S.drag.id) return;
+  const g = S.drag.g;
+  S.drag = null;
+  canvas.classList.remove('drag');
+  clampGroup(trySnap(g));
+}
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+
+function rotateUnderPointer(dir, x, y) {
+  if (!url.rot || S.solved) return;
+  const tgt = S.drag ? S.drag.g : pieceAt(x, y)?.group;
+  if (!tgt) return;
+  bringToFront(tgt);
+  rotateGroup(tgt, dir, { x, y });
+  if (S.drag) S.drag.off = { x: S.lastPtr.x - tgt.T.x, y: S.lastPtr.y - tgt.T.y };
+}
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  rotateUnderPointer(1, e.clientX, e.clientY);
+});
+
+let wheelAcc = 0;
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) > 40) {
+    const dir = wheelAcc > 0 ? 1 : -1;
+    wheelAcc = 0;
+    rotateUnderPointer(dir, S.drag ? S.lastPtr.x : e.clientX, S.drag ? S.lastPtr.y : e.clientY);
+  }
+}, { passive: false });
+
+addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') rotateUnderPointer(e.shiftKey ? -1 : 1, S.lastPtr.x, S.lastPtr.y);
+  if ((e.key === 'p' || e.key === 'P') && !e.repeat) { S.peek = true; dirty = true; }
+});
+addEventListener('keyup', e => {
+  if (e.key === 'p' || e.key === 'P') { S.peek = false; dirty = true; }
+});
+
+$('peekBtn').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  S.peek = true; dirty = true;
+  const up = () => { S.peek = false; dirty = true; removeEventListener('pointerup', up); };
+  addEventListener('pointerup', up);
+});
+
+// ---------- render ----------
+function resize() {
+  const d = DPR();
+  canvas.width = Math.round(innerWidth * d);
+  canvas.height = Math.round(innerHeight * d);
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  for (const g of S.groups) clampGroup(g);
+  dirty = true;
+}
+addEventListener('resize', resize);
+
+function draw(now) {
+  const d = DPR();
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  for (const p of S.z) {
+    const g = p.group;
+    ctx.save();
+    ctx.translate(g.T.x, g.T.y);
+    ctx.rotate(g.dispRot * Math.PI / 180);
+    if (S.drag && S.drag.g === g) {
+      ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 8;
+    }
+    ctx.drawImage(p.sprite, p.bb.x - p.sm, p.bb.y - p.sm, p.bb.w + 2 * p.sm, p.bb.h + 2 * p.sm);
+    ctx.restore();
+  }
+  S.flashes = S.flashes.filter(f => now - f.t < 300);
+  for (const f of S.flashes) {
+    const a = 0.8 * (1 - (now - f.t) / 300);
+    for (const p of f.pieces) {
+      const g = p.group;
+      ctx.save();
+      ctx.translate(g.T.x, g.T.y);
+      ctx.rotate(g.dispRot * Math.PI / 180);
+      ctx.strokeStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      ctx.lineWidth = 3;
+      ctx.stroke(p.path);
+      ctx.restore();
+    }
+  }
+  if (S.peek && S.img) {
+    const B = S.board;
+    ctx.fillStyle = 'rgba(10,12,18,.7)';
+    ctx.fillRect(0, 0, innerWidth, innerHeight);
+    const x = (innerWidth - B.w) / 2, y = barH() + (innerHeight - barH() - B.h) / 2;
+    ctx.drawImage(S.img, 0, 0, S.img.width, S.img.height, x, y, B.w, B.h);
+    ctx.strokeStyle = 'rgba(255,255,255,.5)';
+    ctx.strokeRect(x, y, B.w, B.h);
+  }
+  for (const c of S.confetti) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.fillStyle = `hsl(${c.h} 90% 60%)`;
+    ctx.fillRect(-c.s / 2, -c.s / 2, c.s, c.s * 0.6);
+    ctx.restore();
+  }
+}
+
+let lastNow = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastNow) / 1000);
+  lastNow = now;
+  for (const g of S.groups) {
+    if (S.winTween && S.winTween.g === g) continue;
+    const tgt = g.rotCount * 90;
+    if (g.dispRot !== tgt) {
+      g.dispRot += (tgt - g.dispRot) * 0.35;
+      if (Math.abs(g.dispRot - tgt) < 0.5) g.dispRot = tgt;
+      dirty = true;
+    }
+  }
+  if (S.winTween) {
+    const w = S.winTween, u = Math.min(1, (now - w.t0) / w.dur);
+    const ez = 1 - Math.pow(1 - u, 3);
+    w.g.T.x = w.from.x + (w.to.x - w.from.x) * ez;
+    w.g.T.y = w.from.y + (w.to.y - w.from.y) * ez;
+    w.g.dispRot = w.from.rot + (w.to.rot - w.from.rot) * ez;
+    if (u >= 1) S.winTween = null;
+    dirty = true;
+  }
+  if (S.confetti.length) {
+    for (const c of S.confetti) {
+      c.x += c.vx * dt; c.y += c.vy * dt;
+      c.vy += 220 * dt; c.rot += c.vr * dt;
+    }
+    S.confetti = S.confetti.filter(c => c.y < innerHeight + 30);
+    dirty = true;
+  }
+  if (S.flashes.length) dirty = true;
+  if (dirty) { draw(now); dirty = false; }
+  requestAnimationFrame(frame);
+}
+
+// ---------- status ----------
+const fmtTime = ms => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${(s / 60) | 0}:${String(s % 60).padStart(2, '0')}`;
+};
+function updateStat() {
+  if (!S.pieces.length) { $('stat').textContent = ''; return; }
+  const time = S.solved ? fmtTime(S.endT - S.startT)
+    : S.started ? fmtTime(performance.now() - S.startT) : '0:00';
+  const groups = S.groups.length > 1 ? `${S.groups.length} groups` : 'solved!';
+  $('stat').textContent = `${S.pieces.length} pieces · ${groups} · ${time}`;
+}
+setInterval(() => { if (S.started && !S.solved) updateStat(); }, 1000);
+
+// ---------- sound ----------
+let AC = null;
+function initAudio() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  if (AC && AC.state === 'suspended') AC.resume();
+}
+function tone(f, at, dur, vol) {
+  if (!AC || muted) return;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'triangle';
+  o.frequency.value = f;
+  const T = AC.currentTime + at;
+  g.gain.setValueAtTime(0.0001, T);
+  g.gain.exponentialRampToValueAtTime(vol, T + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, T + dur);
+  o.connect(g); g.connect(AC.destination);
+  o.start(T); o.stop(T + dur + 0.05);
+}
+const clickSound = () => tone(700 + Math.random() * 160, 0, 0.09, 0.12);
+const winSound = () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.12, 0.3, 0.1));
+
+// ---------- image loading ----------
+async function loadBlob(blob) {
+  try {
+    let bmp;
+    try { bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' }); }
+    catch { bmp = await createImageBitmap(blob); }
+    setImage(bmp);
+  } catch {
+    const u = URL.createObjectURL(blob);
+    const im = new Image();
+    im.onload = () => { setImage(im); URL.revokeObjectURL(u); };
+    im.src = u;
+  }
+}
+function setImage(img) {
+  S.img = img;
+  $('start').hidden = true;
+  $('win').hidden = true;
+  generatePuzzle();
+}
+
+// procedural sample so the puzzle can be tried without picking a file
+function makeSample() {
+  const w = 1600, h = 1100;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const g = cv.getContext('2d');
+  const r = mulberry32(randSeed());
+  const hue = (r() * 360) | 0;
+  const sky = g.createLinearGradient(0, 0, 0, h * 0.75);
+  sky.addColorStop(0, `hsl(${hue} 65% 70%)`);
+  sky.addColorStop(1, `hsl(${(hue + 45) % 360} 80% 87%)`);
+  g.fillStyle = sky;
+  g.fillRect(0, 0, w, h * 0.78);
+  const sx = w * (0.2 + r() * 0.6), sy = h * (0.12 + r() * 0.25), sr = 55 + r() * 55;
+  const glow = g.createRadialGradient(sx, sy, 10, sx, sy, sr * 3);
+  glow.addColorStop(0, 'rgba(255,252,230,.9)');
+  glow.addColorStop(1, 'rgba(255,252,230,0)');
+  g.fillStyle = glow;
+  g.beginPath(); g.arc(sx, sy, sr * 3, 0, 7); g.fill();
+  g.fillStyle = '#fffbe8';
+  g.beginPath(); g.arc(sx, sy, sr, 0, 7); g.fill();
+  for (let i = 0; i < 4; i++) {
+    const base = h * (0.42 + i * 0.11), amp = h * (0.05 + r() * 0.06);
+    g.fillStyle = `hsl(${(hue + 160 + i * 14) % 360} ${28 + i * 8}% ${18 + i * 11}%)`;
+    g.beginPath();
+    g.moveTo(0, h);
+    const f1 = 1.5 + r() * 2.5, f2 = 4 + r() * 5, p1 = r() * 7, p2 = r() * 7;
+    for (let x = 0; x <= w; x += 16) {
+      const u = x / w;
+      g.lineTo(x, base - amp * (Math.sin(u * f1 * 6.28 + p1) * 0.6 + Math.sin(u * f2 * 6.28 + p2) * 0.4));
+    }
+    g.lineTo(w, h);
+    g.closePath();
+    g.fill();
+  }
+  const wg = g.createLinearGradient(0, h * 0.78, 0, h);
+  wg.addColorStop(0, `hsl(${(hue + 200) % 360} 50% 38%)`);
+  wg.addColorStop(1, `hsl(${(hue + 220) % 360} 55% 20%)`);
+  g.fillStyle = wg;
+  g.fillRect(0, h * 0.78, w, h * 0.22);
+  g.globalAlpha = 0.25;
+  g.fillStyle = '#fff';
+  for (let i = 0; i < 60; i++) g.fillRect(r() * w, h * 0.79 + r() * h * 0.2, 30 + r() * 120, 1.5);
+  g.globalAlpha = 1;
+  g.strokeStyle = 'rgba(35,35,55,.7)';
+  g.lineWidth = 3;
+  g.lineCap = 'round';
+  for (let i = 0; i < 6; i++) {
+    const bx = w * (0.1 + r() * 0.8), by = h * (0.08 + r() * 0.3), s = 7 + r() * 9;
+    g.beginPath(); g.arc(bx - s, by + s, s, -2.4, -0.7); g.stroke();
+    g.beginPath(); g.arc(bx + s, by + s, s, -2.4, -0.7); g.stroke();
+  }
+  return cv;
+}
+
+// ---------- toolbar wiring ----------
+{
+  const sel = $('countSel');
+  const opts = [['auto', 'Auto pieces'], [12, '~12'], [24, '~24'], [48, '~48'],
+    [80, '~80'], [120, '~120'], [180, '~180'], [260, '~260']];
+  if (url.n !== 'auto' && !opts.some(([v]) => v === url.n)) opts.push([url.n, '~' + url.n]);
+  for (const [v, label] of opts) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.value = url.n;
+  sel.addEventListener('change', () => {
+    url.n = sel.value === 'auto' ? 'auto' : +sel.value;
+    writeURL();
+    generatePuzzle();
+  });
+}
+$('rotChk').checked = url.rot;
+$('rotChk').addEventListener('change', e => {
+  url.rot = e.target.checked;
+  writeURL();
+  if (!url.rot) {
+    for (const g of [...S.groups]) {
+      const k = ((g.rotCount % 4) + 4) % 4;
+      if (!k || !S.groups.includes(g)) continue;
+      const cen = groupCenter(g);
+      for (let i = 0; i < 4 - k && S.groups.includes(g); i++) rotateGroup(g, 1, cen);
+    }
+  }
+});
+$('pickBtn').addEventListener('click', () => $('fileInp').click());
+$('pickBtn2').addEventListener('click', () => $('fileInp').click());
+$('newImgBtn').addEventListener('click', () => { $('win').hidden = true; $('start').hidden = false; });
+$('sampleBtn').addEventListener('click', () => setImage(makeSample()));
+$('cutBtn').addEventListener('click', () => { url.seed = randSeed(); generatePuzzle(); });
+$('againBtn').addEventListener('click', () => { url.seed = randSeed(); generatePuzzle(); });
+$('scatterBtn').addEventListener('click', scatter);
+$('fileInp').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) loadBlob(f);
+  e.target.value = '';
+});
+const muteBtn = $('muteBtn');
+muteBtn.textContent = muted ? '🔇' : '🔊';
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  localStorage.setItem('jigsaw-muted', muted ? '1' : '0');
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+});
+
+addEventListener('dragover', e => { e.preventDefault(); $('dropHint').hidden = false; });
+addEventListener('dragleave', () => { $('dropHint').hidden = true; });
+addEventListener('drop', e => {
+  e.preventDefault();
+  $('dropHint').hidden = true;
+  const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+  if (f) loadBlob(f);
+});
+addEventListener('paste', e => {
+  const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  const f = it && it.getAsFile();
+  if (f) loadBlob(f);
+});
+
+resize();
+writeURL();
+requestAnimationFrame(frame);
+window.jigsawDebug = S;
+})();
+</script>
+</body>
+</html>
