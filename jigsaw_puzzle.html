@@ -186,6 +186,13 @@ function gridFor(imgW, imgH) {
   if (url.n === 'auto') {
     const cell = phone ? 88 : 104;
     cols = Math.round(bw / cell); rows = Math.round(bh / cell);
+    // cell-size-based counts are too easy below ~48 pieces: floor of ~24 on a
+    // phone rising to 48 on a laptop; bigger screens keep the cell-based count
+    const boost = Math.min(48, Math.round(24 + Math.max(0, innerWidth * innerHeight - 330000) / 30000));
+    if (cols * rows < boost) {
+      cols = Math.round(Math.sqrt(boost * bw / bh));
+      rows = Math.round(boost / Math.max(1, cols));
+    }
   } else {
     cols = Math.round(Math.sqrt(url.n * bw / bh));
     rows = Math.round(url.n / Math.max(1, cols));
