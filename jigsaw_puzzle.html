@@ -28,6 +28,11 @@
   .card h1 { margin: 0 0 10px; font-size: 26px; }
   .card p { margin: 10px 0; }
   .hint { font-size: 12px; opacity: .65; }
+  @media (max-width: 640px) {
+    #bar { padding: 4px 6px; gap: 4px; }
+    #bar .wide { display: none; }
+    #bar .btn { padding: 4px 8px; }
+  }
   #winBar { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 6;
     display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center;
     max-width: 94vw; padding: 10px 16px; background: #1c2230d9; border: 1px solid #3a4560;
@@ -43,7 +48,7 @@
 <canvas id="board"></canvas>
 
 <div id="bar">
-  <b>🧩 Jigsaw</b>
+  <b>🧩<span class="wide"> Jigsaw</span></b>
   <button id="pickBtn" class="btn" title="Choose a new image">Image…</button>
   <select id="countSel" class="btn" title="Number of pieces"></select>
   <label class="btn" title="Allow piece rotation (double-click / right-click / scroll to rotate)">
@@ -259,6 +264,8 @@ function generatePuzzle() {
     p.neighbors = [at(p.r - 1, p.c), at(p.r + 1, p.c), at(p.r, p.c - 1), at(p.r, p.c + 1)].filter(Boolean);
 
   S.tol = Math.max(10, Math.min(26, Math.min(cw, ch) * 0.3));
+  const autoOpt = $('countSel').querySelector('option[value=auto]');
+  if (autoOpt) autoOpt.textContent = url.n === 'auto' ? `Auto (${cols * rows})` : 'Auto pieces';
   makeSprites();
   scatter();
   writeURL();
@@ -283,10 +290,10 @@ function makeSprites() {
     g.clip(p.path);
     g.drawImage(img, 0, 0, img.width, img.height, 0, 0, B.w, B.h);
     g.lineWidth = 2.5;
-    g.save(); g.translate(1, 1); g.strokeStyle = 'rgba(255,255,255,.35)'; g.stroke(p.path); g.restore();
-    g.save(); g.translate(-1, -1); g.strokeStyle = 'rgba(0,0,0,.35)'; g.stroke(p.path); g.restore();
+    g.save(); g.translate(1, 1); g.strokeStyle = 'rgba(255,255,255,.25)'; g.stroke(p.path); g.restore();
+    g.save(); g.translate(-1, -1); g.strokeStyle = 'rgba(0,0,0,.25)'; g.stroke(p.path); g.restore();
     g.restore();
-    g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(p.path);
+    g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.25)'; g.stroke(p.path);
     p.sprite = cv;
   }
 }
@@ -616,11 +623,10 @@ const fmtTime = ms => {
   return `${(s / 60) | 0}:${String(s % 60).padStart(2, '0')}`;
 };
 function updateStat() {
-  if (!S.pieces.length) { $('stat').textContent = ''; return; }
-  const time = S.solved ? fmtTime(S.endT - S.startT)
-    : S.started ? fmtTime(performance.now() - S.startT) : '0:00';
-  const groups = S.groups.length > 1 ? `${S.groups.length} groups` : 'solved!';
-  $('stat').textContent = `${S.pieces.length} pieces · ${groups} · ${time}`;
+  // once solved the win bar carries the stats; keep the toolbar quiet
+  if (!S.pieces.length || S.solved) { $('stat').textContent = ''; return; }
+  const time = S.started ? fmtTime(performance.now() - S.startT) : '0:00';
+  $('stat').textContent = `${S.groups.length} groups · ${time}`;
 }
 setInterval(() => { if (S.started && !S.solved) updateStat(); }, 1000);
 
