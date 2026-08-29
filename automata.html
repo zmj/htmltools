@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Automata</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; color: #dfe6f0;
+    font: 14px/1.5 system-ui, sans-serif; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  body.idle { cursor: none; }
+  .panel { position: fixed; z-index: 5; background: #0b0e14d9; border: 1px solid #ffffff1f; border-radius: 12px;
+    backdrop-filter: blur(10px); box-shadow: 0 10px 40px #0008; transition: opacity .5s; pointer-events: none;
+    user-select: none; }
+  .panel.hide { opacity: 0; }
+  #help { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 18px 26px 20px; }
+  #help h1 { margin: 0 0 2px; font-size: 20px; font-weight: 600; letter-spacing: .06em; }
+  #help .sub { opacity: .6; margin-bottom: 12px; }
+  #help table { border-collapse: collapse; }
+  #help td { padding: 3px 12px 3px 0; white-space: nowrap; vertical-align: top; }
+  #help td:first-child { text-align: right; }
+  #help .foot { margin-top: 12px; opacity: .6; font-size: 13px; }
+  kbd { display: inline-block; min-width: 20px; text-align: center; padding: 0 5px; border-radius: 4px;
+    background: #ffffff14; border: 1px solid #ffffff2a; font: 12px/18px ui-monospace, Menlo, monospace; }
+  #toast { left: 50%; bottom: 28px; transform: translateX(-50%); padding: 8px 16px; white-space: nowrap; }
+  #toast b { font-weight: 600; }
+  #toast span { opacity: .6; margin-left: 8px; }
+  #err { left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 20px 28px; max-width: 420px;
+    text-align: center; opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="help" class="panel">
+  <h1>AUTOMATA</h1>
+  <div class="sub" id="helpSub"></div>
+  <table>
+    <tr><td><kbd>1</kbd>–<kbd>6</kbd> <kbd>Tab</kbd></td><td>world · Coral, Tides, Spirals, Sparks, Frost, Cycles</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>palette</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>speed</td></tr>
+    <tr><td><kbd>−</kbd> <kbd>+</kbd></td><td>cell size</td></tr>
+    <tr><td><kbd>Space</kbd></td><td>pause</td></tr>
+    <tr><td><kbd>R</kbd> <kbd>X</kbd></td><td>reseed · clear</td></tr>
+    <tr><td><kbd>G</kbd></td><td>ghost brush (wanders on its own)</td></tr>
+    <tr><td><kbd>F</kbd> <kbd>S</kbd></td><td>fullscreen · save image</td></tr>
+    <tr><td><kbd>H</kbd></td><td>this help</td></tr>
+  </table>
+  <div class="foot">Move the mouse to stir things up. Settings live in the URL.</div>
+</div>
+<div id="toast" class="panel hide"></div>
+<div id="err" class="panel" hidden>This page needs WebGL2 with float render targets, which your browser doesn't seem to offer.</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+// ---------------------------------------------------------------- worlds & palettes
+// kind selects the rule family in the update shader; params feed u_params.
+const RD = 0, RPS = 1, GEN = 2, EXC = 3, CYC = 4;
+const WORLDS = [
+  { id: 'coral',   name: 'Coral',   desc: 'reaction–diffusion',      kind: RD,  speed: 8,   cell: 3, rain: 3,  rainR: 4,  brush: 18 },
+  { id: 'tides',   name: 'Tides',   desc: 'rock · paper · scissors', kind: RPS, speed: 4,   cell: 3, rain: 8,  rainR: 12, brush: 24, params: [0.1, 0.1, 0.15, 0] },  // growth, predation, diffusion
+  { id: 'spirals', name: 'Spirals', desc: 'excitable medium',        kind: EXC, speed: 6,   cell: 3, rain: 5,  rainR: 5,  brush: 16, params: [0.75, 0.06, 0.02, 0.015] },  // Barkley a, b, ε, dt
+  { id: 'sparks',  name: 'Sparks',  desc: 'star wars · B2/S345/4',   kind: GEN, speed: 1,   cell: 4, rain: 2,  rainR: 10, brush: 24, params: [1 << 2, (1 << 3) | (1 << 4) | (1 << 5), 4, 0] },  // birth mask, survive mask, states
+  { id: 'frost',   name: 'Frost',   desc: 'faders · B2/S2/25',       kind: GEN, speed: 1,   cell: 4, rain: 3,  rainR: 8,  brush: 24, params: [1 << 2, 1 << 2, 25, 0] },
+  { id: 'cycles',  name: 'Cycles',  desc: 'cyclic automaton',        kind: CYC, speed: 0.5, cell: 4, rain: 10, rainR: 6,  brush: 20, params: [16, 1, 1, 0] },  // states, threshold, radius
+];
+// Cosine palettes: a + b*cos(2π(c*t + d))
+const PALETTES = [
+  { name: 'Aurora', a: [0.50, 0.50, 0.50], b: [0.50, 0.50, 0.50], c: [1, 1, 1],       d: [0.00, 0.33, 0.67] },
+  { name: 'Ocean',  a: [0.25, 0.50, 0.65], b: [0.35, 0.40, 0.35], c: [1, 1, 1],       d: [0.55, 0.45, 0.30] },
+  { name: 'Nebula', a: [0.50, 0.35, 0.60], b: [0.50, 0.35, 0.40], c: [1, 1, 1],       d: [0.75, 0.55, 0.45] },
+  { name: 'Sunset', a: [0.60, 0.40, 0.50], b: [0.40, 0.40, 0.40], c: [1, 0.8, 0.6],   d: [0.85, 0.10, 0.35] },
+  { name: 'Neon',   a: [0.50, 0.50, 0.50], b: [0.50, 0.50, 0.50], c: [2, 1, 0],       d: [0.50, 0.20, 0.25] },
+  { name: 'Ember',  a: [0.65, 0.40, 0.25], b: [0.35, 0.32, 0.22], c: [1, 1, 1],       d: [0.00, 0.12, 0.28] },
+  { name: 'Moss',   a: [0.40, 0.55, 0.35], b: [0.30, 0.35, 0.30], c: [1, 1, 1],       d: [0.25, 0.40, 0.55] },
+  { name: 'Ice',    a: [0.55, 0.65, 0.80], b: [0.35, 0.30, 0.20], c: [1, 1, 1],       d: [0.50, 0.55, 0.65] },
+];
+const SPEEDS = [0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+// Gray–Scott (f, k) waypoints the Coral world drifts through.
+const RD_PATH = [[0.055, 0.062], [0.0367, 0.0649], [0.030, 0.062], [0.029, 0.057], [0.022, 0.051], [0.014, 0.054]];
+
+// ---------------------------------------------------------------- shaders
+const VS = `#version 300 es
+void main() { vec2 v = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
+
+const UPDATE_FS = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D u_state;
+uniform ivec2 u_size;
+uniform int u_world, u_step, u_reset;
+uniform float u_time;
+uniform vec4 u_mouse, u_seed, u_params;
+out vec4 o;
+const float TAU = 6.28318530718;
+
+uint uh(uint x) { x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; x ^= x >> 16u; return x; }
+float rnd(ivec2 p, uint salt) {
+  uint h = uh(uint(p.x) + uh(uint(p.y) + uh(uint(u_step) + uh(salt))));
+  return float(h) / 4294967296.0;
+}
+vec4 get(ivec2 p) { return texelFetch(u_state, (p + u_size) % u_size, 0); }
+float tdist(vec2 a, vec2 b) { vec2 d = abs(a - b); vec2 s = vec2(u_size); d = min(d, s - d); return length(d); }
+float brush(vec2 p, vec4 m) { if (m.w <= 0.0) return 0.0; return smoothstep(m.z, m.z * 0.3, tdist(p, m.xy)) * m.w; }
+
+vec4 init(ivec2 p) {
+  vec2 fp = vec2(p) + 0.5;
+  if (u_world == 0) {
+    float B = 0.0;
+    for (int i = 0; i < 24; i++) {
+      vec2 c = vec2(rnd(ivec2(i, 1), 11u), rnd(ivec2(i, 2), 12u)) * vec2(u_size);
+      if (tdist(fp, c) < 3.0 + 6.0 * rnd(ivec2(i, 3), 13u)) B = 1.0;
+    }
+    return vec4(1.0, B, 0.0, 0.0);
+  }
+  if (u_world == 1) return vec4(rnd(p, 1u), rnd(p, 2u), rnd(p, 3u), 0.0) * 0.6;
+  if (u_world == 2) {
+    // scattered soup patches rather than a uniform soup
+    float alive = 0.0;
+    for (int i = 0; i < 30; i++) {
+      vec2 c = vec2(rnd(ivec2(i, 8), 31u), rnd(ivec2(i, 9), 32u)) * vec2(u_size);
+      if (tdist(fp, c) < 4.0 + 6.0 * rnd(ivec2(i, 10), 33u) && rnd(p, 4u) < 0.35) alive = 1.0;
+    }
+    float hue = fract(fp.x / float(u_size.x) + 0.5 * fp.y / float(u_size.y));
+    return vec4(alive, alive, hue, 0.0);
+  }
+  // spirals / cycles: start from a handful of ready-made spiral cores, nearest core wins
+  float N = u_world == 3 ? 40.0 : u_params.x, best = 1e9, val = 0.0;
+  for (int i = 0; i < 10; i++) {
+    vec2 c = vec2(rnd(ivec2(i, 4), 21u), rnd(ivec2(i, 5), 22u)) * vec2(u_size);
+    vec2 d = fp - c, sz = vec2(u_size); d -= sz * round(d / sz);
+    float r = length(d);
+    if (r < best) {
+      best = r;
+      float dir = rnd(ivec2(i, 6), 23u) < 0.5 ? -1.0 : 1.0;
+      val = fract(dir * atan(d.y, d.x) / TAU + r / N + rnd(ivec2(i, 7), 24u));
+    }
+  }
+  if (u_world == 3) return vec4(val < 0.12 ? 1.0 : 0.0, val < 0.12 ? 0.3 : 0.8 * exp(-(val - 0.12) * 5.0), 0.0, 0.0);
+  return vec4(floor(val * N), 0.0, 0.0, 0.0);
+}
+
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec2 fp = vec2(p) + 0.5;
+  if (u_reset == 1) { o = init(p); return; }
+  if (u_reset == 2) { o = u_world == 0 ? vec4(1.0, 0.0, 0.0, 0.0) : vec4(0.0); return; }
+  vec4 c = get(p);
+  float m = max(brush(fp, u_mouse), brush(fp, u_seed));
+
+  if (u_world == 0) {
+    // Gray–Scott reaction–diffusion
+    vec2 lap = -c.xy
+      + 0.2 * (get(p + ivec2(1, 0)).xy + get(p - ivec2(1, 0)).xy + get(p + ivec2(0, 1)).xy + get(p - ivec2(0, 1)).xy)
+      + 0.05 * (get(p + ivec2(1, 1)).xy + get(p - ivec2(1, 1)).xy + get(p + ivec2(1, -1)).xy + get(p - ivec2(1, -1)).xy);
+    float A = c.x, B = c.y, f = u_params.x, k = u_params.y;
+    float r = A * B * B;
+    A += lap.x - r + f * (1.0 - A);
+    B += 0.5 * lap.y + r - (k + f) * B;
+    B = max(B, m * 0.5);
+    o = vec4(clamp(A, 0.0, 1.0), clamp(B, 0.0, 1.0), 0.0, 0.0);
+  } else if (u_world == 1) {
+    // Three cyclically competing species (May–Leonard style), with diffusion
+    vec3 lap = -c.xyz
+      + 0.2 * (get(p + ivec2(1, 0)).xyz + get(p - ivec2(1, 0)).xyz + get(p + ivec2(0, 1)).xyz + get(p - ivec2(0, 1)).xyz)
+      + 0.05 * (get(p + ivec2(1, 1)).xyz + get(p - ivec2(1, 1)).xyz + get(p + ivec2(1, -1)).xyz + get(p - ivec2(1, -1)).xyz);
+    vec3 s = c.xyz;
+    float tot = s.x + s.y + s.z;
+    vec3 pred = s.zxy;               // x eaten by z, y by x, z by y
+    s += u_params.z * lap + u_params.x * s * (1.0 - tot) - u_params.y * s * pred;
+    s = clamp(s, 0.0, 1.0);
+    if (m > 0.0) {
+      int k = int(mod(u_time * 0.6, 3.0));
+      vec3 inj = vec3(k == 0 ? 1.0 : 0.0, k == 1 ? 1.0 : 0.0, k == 2 ? 1.0 : 0.0);
+      s = mix(s, inj, m);
+    }
+    o = vec4(s, 0.0);
+  } else if (u_world == 2) {
+    // Generations rule (birth mask, survive mask, states). Hue inherited from parents.
+    int s = int(c.x + 0.5);
+    int C = int(u_params.z + 0.5);
+    int n = 0; vec2 hv = vec2(0.0);
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+      if (dx == 0 && dy == 0) continue;
+      vec4 q = get(p + ivec2(dx, dy));
+      if (int(q.x + 0.5) == 1) { n++; hv += vec2(cos(q.z * TAU), sin(q.z * TAU)); }
+    }
+    int birth = int(u_params.x + 0.5), surv = int(u_params.y + 0.5);
+    int ns; float hue = c.z;
+    if (s == 0) {
+      if (((birth >> n) & 1) == 1) {
+        ns = 1;
+        hue = dot(hv, hv) > 1e-4 ? fract(atan(hv.y, hv.x) / TAU + (rnd(p, 7u) - 0.5) * 0.03) : rnd(p, 6u);
+      } else ns = 0;
+    } else if (s == 1) ns = (((surv >> n) & 1) == 1) ? 1 : (C > 2 ? 2 : 0);
+    else ns = (s + 1 < C) ? s + 1 : 0;
+    if (m > 0.0 && rnd(p, 8u) < m * 0.4) { ns = 1; hue = fract(u_time * 0.05); }
+    float heat = max(ns == 1 ? 1.0 : 0.0, c.y * 0.9);
+    o = vec4(float(ns), heat, hue, 0.0);
+  } else if (u_world == 3) {
+    // Barkley excitable medium: fast activator u, slow inhibitor v
+    vec2 lap = -c.xy
+      + 0.2 * (get(p + ivec2(1, 0)).xy + get(p - ivec2(1, 0)).xy + get(p + ivec2(0, 1)).xy + get(p - ivec2(0, 1)).xy)
+      + 0.05 * (get(p + ivec2(1, 1)).xy + get(p - ivec2(1, 1)).xy + get(p + ivec2(1, -1)).xy + get(p - ivec2(1, -1)).xy);
+    float u = c.x, v = c.y, a = u_params.x, b = u_params.y, eps = u_params.z, dt = u_params.w;
+    float th = (v + b) / a;
+    float nu = u + dt * (u * (1.0 - u) * (u - th) / eps + 13.3 * lap.x);
+    float nv = v + dt * (u - v);
+    nu = max(nu, m);
+    o = vec4(clamp(nu, 0.0, 1.0), clamp(nv, 0.0, 1.0), 0.0, 0.0);
+  } else {
+    // Cyclic cellular automaton
+    int N = int(u_params.x + 0.5);
+    int s = int(c.x + 0.5);
+    int nxt = (s + 1) % N;
+    int cnt = 0, R = int(u_params.z + 0.5);
+    for (int dy = -R; dy <= R; dy++) for (int dx = -R; dx <= R; dx++) {
+      if (dx == 0 && dy == 0) continue;
+      if (int(get(p + ivec2(dx, dy)).x + 0.5) == nxt) cnt++;
+    }
+    int ns = cnt >= int(u_params.y + 0.5) ? nxt : s;
+    if (m > 0.0 && rnd(p, 10u) < m) ns = int(rnd(p, 11u) * float(N)) % N;
+    o = vec4(float(ns), ns != s ? 1.0 : c.y * 0.8, 0.0, 0.0);
+  }
+}`;
+
+const DISPLAY_FS = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D u_state;
+uniform ivec2 u_size;
+uniform vec2 u_res;
+uniform int u_world;
+uniform float u_time;
+uniform vec3 u_pa, u_pb, u_pc, u_pd;
+uniform vec4 u_params;
+out vec4 o;
+const float TAU = 6.28318530718;
+
+vec3 pal(float t) { return u_pa + u_pb * cos(TAU * (u_pc * t + u_pd)); }
+vec4 get(ivec2 p) { return texelFetch(u_state, (p + u_size * 4) % u_size, 0); }
+vec4 bil(vec2 q) {
+  q -= 0.5; ivec2 i = ivec2(floor(q)); vec2 f = q - vec2(i);
+  return mix(mix(get(i), get(i + ivec2(1, 0)), f.x), mix(get(i + ivec2(0, 1)), get(i + ivec2(1, 1)), f.x), f.y);
+}
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float frontOf(vec3 s) { return min(1.0, 4.5 * (s.x * s.z + s.y * s.x + s.z * s.y)); }
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 cell = uv * vec2(u_size);
+  vec3 col;
+  if (u_world == 0) {
+    float B  = bil(cell).y;
+    float bx = bil(cell + vec2(1.0, 0.0)).y - bil(cell - vec2(1.0, 0.0)).y;
+    float by = bil(cell + vec2(0.0, 1.0)).y - bil(cell - vec2(0.0, 1.0)).y;
+    vec3 n = normalize(vec3(-bx, -by, 0.18));
+    vec3 L = normalize(vec3(0.6 * cos(u_time * 0.07), 0.6 * sin(u_time * 0.07), 0.8));
+    float diff = max(dot(n, L), 0.0);
+    float spec = pow(max(dot(reflect(-L, n), vec3(0.0, 0.0, 1.0)), 0.0), 32.0);
+    float v = smoothstep(0.02, 0.2, B);
+    vec3 base = pal(B * 0.9 + u_time * 0.008 + 0.08 * uv.x);
+    col = mix(vec3(0.015, 0.015, 0.03), base * (0.25 + 0.75 * diff) + spec * 0.35, v);
+  } else if (u_world == 1) {
+    vec3 s = bil(cell).xyz;
+    float tot = s.x + s.y + s.z;
+    float front = frontOf(s);
+    float fx = frontOf(bil(cell + vec2(1.0, 0.0)).xyz) - frontOf(bil(cell - vec2(1.0, 0.0)).xyz);
+    float fy = frontOf(bil(cell + vec2(0.0, 1.0)).xyz) - frontOf(bil(cell - vec2(0.0, 1.0)).xyz);
+    vec3 n = normalize(vec3(-fx, -fy, 0.6));
+    vec3 L = normalize(vec3(0.5 * cos(u_time * 0.05), 0.5 * sin(u_time * 0.05), 0.8));
+    float diff = 0.55 + 0.45 * max(dot(n, L), 0.0);
+    float spec = pow(max(dot(reflect(-L, n), vec3(0.0, 0.0, 1.0)), 0.0), 24.0);
+    float h = u_time * 0.006;
+    vec3 tint = s.x * pal(h) + s.y * pal(h + 0.3333) + s.z * pal(h + 0.6667);
+    col = tint * (0.07 + 1.3 * front) * diff + spec * 0.3 * front;
+    col = mix(vec3(0.015, 0.015, 0.03), col, smoothstep(0.0, 0.3, tot));
+  } else if (u_world == 2) {
+    vec4 c = get(ivec2(floor(cell)));
+    int s = int(c.x + 0.5); float C = u_params.z;
+    vec3 base = pal(c.z + u_time * 0.004);
+    if (s == 1) col = base * 0.9 + 0.45;
+    else if (s > 1) col = base * (0.85 * (1.0 - (float(s) - 1.0) / (C - 1.0)) + 0.1);
+    else col = base * c.y * 0.35 + vec3(0.01, 0.01, 0.02);
+  } else if (u_world == 3) {
+    vec2 s = bil(cell).xy;
+    float hx = dot(bil(cell + vec2(1.0, 0.0)).xy - bil(cell - vec2(1.0, 0.0)).xy, vec2(0.7, 0.3));
+    float hy = dot(bil(cell + vec2(0.0, 1.0)).xy - bil(cell - vec2(0.0, 1.0)).xy, vec2(0.7, 0.3));
+    vec3 n = normalize(vec3(-hx, -hy, 0.5));
+    vec3 L = normalize(vec3(0.5 * cos(u_time * 0.05), 0.5 * sin(u_time * 0.05), 0.8));
+    float diff = 0.5 + 0.5 * max(dot(n, L), 0.0);
+    float spec = pow(max(dot(reflect(-L, n), vec3(0.0, 0.0, 1.0)), 0.0), 20.0);
+    float h = u_time * 0.006;
+    float front = smoothstep(0.15, 0.7, s.x);
+    float tail = smoothstep(0.05, 0.9, s.y);
+    col = pal(h + 0.1) * front * 1.1 + pal(h + 0.4 + 0.35 * s.y) * tail * tail * 0.55 * (1.0 - front);
+    col = col * diff + spec * 0.25 * max(front, tail * 0.5);
+    col += vec3(0.015, 0.015, 0.03) * (1.0 - max(front, tail));
+  } else {
+    vec4 c = get(ivec2(floor(cell)));
+    float t = c.x / u_params.x;
+    float band = smoothstep(0.1, 1.0, 0.5 + 0.5 * cos(TAU * (t - u_time * 0.03)));
+    col = pal(t * 0.5 + u_time * 0.01) * (0.06 + 0.94 * band) * (0.35 + 0.65 * c.y);
+  }
+  // vignette + dither
+  float r = length((uv - 0.5) * vec2(u_res.x / u_res.y, 1.0));
+  col *= 1.0 - 0.35 * smoothstep(0.35, 1.0, r);
+  col += (hash(gl_FragCoord.xy + fract(u_time)) - 0.5) / 255.0;
+  o = vec4(col, 1.0);
+}`;
+
+const COPY_FS = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D u_src; uniform vec2 u_res; out vec4 o;
+void main() { o = texture(u_src, gl_FragCoord.xy / u_res); }`;
+
+// ---------------------------------------------------------------- GL setup
+const canvas = $('c');
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false,
+  powerPreference: 'high-performance' });
+const cbf = gl && gl.getExtension('EXT_color_buffer_float');
+const cbhf = gl && !cbf && gl.getExtension('EXT_color_buffer_half_float');
+if (!gl || (!cbf && !cbhf)) { $('err').hidden = false; $('help').hidden = true; throw new Error('no webgl2 float'); }
+const IFMT = cbf ? gl.RGBA32F : gl.RGBA16F, TYPE = cbf ? gl.FLOAT : gl.HALF_FLOAT;
+
+function compile(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VS)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const nm = gl.getActiveUniform(p, i).name; u[nm] = gl.getUniformLocation(p, nm); }
+  return { p, u };
+}
+const upd = program(UPDATE_FS), disp = program(DISPLAY_FS), copy = program(COPY_FS);
+
+function alloc(w, h) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.texImage2D(gl.TEXTURE_2D, 0, IFMT, w, h, 0, gl.RGBA, TYPE, null);
+  const f = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  return { t, f };
+}
+
+// ---------------------------------------------------------------- state
+const S = { world: 0, pal: 0, speed: 8, cell: 3, ghost: false, paused: false };
+let W = 0, H = 0, bufs = [], cur = 0, stepN = 0, pendingReset = 1, acc = 0;
+const mouse = { x: 0, y: 0, s: 0, down: false, last: -1e9 };
+const seed = [0, 0, 0, 0];
+let nextRain = 0, helpTimer = 0, toastTimer = 0, helpPinned = false;
+// Undocumented tuning/testing params: steps=N pre-runs N steps synchronously, t0=seconds offsets the clock,
+// q=a,b,c,d overrides the world's u_params.
+const DBGQ = new URLSearchParams(location.search);
+const DBG = { q: (DBGQ.get('q') || '').split(',').map(Number).filter(n => !isNaN(n)), steps: parseInt(DBGQ.get('steps')) || 0,
+  t0: parseFloat(DBGQ.get('t0')) || 0 };
+if (DBG.q.length !== 4) DBG.q = null;
+const t0 = performance.now();
+const now = () => DBG.t0 + (performance.now() - t0) / 1000;
+
+function parseURL() {
+  const q = new URLSearchParams(location.search);
+  const wi = WORLDS.findIndex(w => w.id === q.get('w'));
+  if (wi >= 0) S.world = wi;
+  const w = WORLDS[S.world];
+  S.speed = w.speed; S.cell = w.cell;
+  const pi = PALETTES.findIndex(p => p.name.toLowerCase() === (q.get('p') || '').toLowerCase());
+  if (pi >= 0) S.pal = pi;
+  const s = parseFloat(q.get('s')); if (s > 0) S.speed = SPEEDS.reduce((a, b) => Math.abs(b - s) < Math.abs(a - s) ? b : a);
+  const z = parseInt(q.get('z')); if (z >= 1 && z <= 16) S.cell = z;
+  S.ghost = q.get('g') === '1';
+}
+function syncURL() {
+  const q = new URLSearchParams();
+  q.set('w', WORLDS[S.world].id); q.set('p', PALETTES[S.pal].name.toLowerCase());
+  q.set('s', S.speed); q.set('z', S.cell); if (S.ghost) q.set('g', '1');
+  history.replaceState(null, '', '?' + q);
+  $('helpSub').textContent = `${WORLDS[S.world].name} · ${WORLDS[S.world].desc} · ${PALETTES[S.pal].name}`;
+}
+
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  const w = Math.max(8, Math.round(innerWidth / S.cell)), h = Math.max(8, Math.round(innerHeight / S.cell));
+  if (w === W && h === H) return;
+  const nb = [alloc(w, h), alloc(w, h)];
+  if (bufs.length) {
+    gl.useProgram(copy.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufs[cur].t);
+    gl.uniform1i(copy.u.u_src, 0); gl.uniform2f(copy.u.u_res, w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, nb[0].f); gl.viewport(0, 0, w, h);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    for (const b of bufs) { gl.deleteFramebuffer(b.f); gl.deleteTexture(b.t); }
+  }
+  bufs = nb; cur = 0; W = w; H = h;
+}
+
+function worldParams(t) {
+  if (DBG.q) return DBG.q;
+  const w = WORLDS[S.world];
+  if (w.kind !== RD) return w.params;
+  // Coral drifts through the Gray–Scott waypoints: hold each for a while, then ease to the next.
+  const seg = 40, u = (t / seg) % RD_PATH.length, i = Math.floor(u);
+  const a = RD_PATH[i], b = RD_PATH[(i + 1) % RD_PATH.length];
+  let f = Math.max(0, (u - i - 0.6) / 0.4); f = f * f * (3 - 2 * f);
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, 0, 0];
+}
+
+function ghostPos(t) {
+  return [W * (0.5 + 0.42 * Math.sin(t * 0.23) * Math.cos(t * 0.071)),
+          H * (0.5 + 0.42 * Math.sin(t * 0.19 + 1.3) * Math.cos(t * 0.053))];
+}
+
+function step(t, params, m) {
+  gl.useProgram(upd.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufs[cur].t);
+  gl.uniform1i(upd.u.u_state, 0);
+  gl.uniform2i(upd.u.u_size, W, H);
+  gl.uniform1i(upd.u.u_world, WORLDS[S.world].kind);
+  gl.uniform1i(upd.u.u_step, stepN);
+  gl.uniform1i(upd.u.u_reset, pendingReset);
+  gl.uniform1f(upd.u.u_time, t);
+  gl.uniform4fv(upd.u.u_mouse, m);
+  gl.uniform4fv(upd.u.u_seed, seed);
+  gl.uniform4fv(upd.u.u_params, params);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, bufs[1 - cur].f); gl.viewport(0, 0, W, H);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  cur = 1 - cur; stepN++; pendingReset = 0; seed[3] = 0;
+}
+
+function draw(t, params) {
+  const P = PALETTES[S.pal];
+  gl.useProgram(disp.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufs[cur].t);
+  gl.uniform1i(disp.u.u_state, 0);
+  gl.uniform2i(disp.u.u_size, W, H);
+  gl.uniform2f(disp.u.u_res, canvas.width, canvas.height);
+  gl.uniform1i(disp.u.u_world, WORLDS[S.world].kind);
+  gl.uniform1f(disp.u.u_time, t);
+  gl.uniform3fv(disp.u.u_pa, P.a); gl.uniform3fv(disp.u.u_pb, P.b);
+  gl.uniform3fv(disp.u.u_pc, P.c); gl.uniform3fv(disp.u.u_pd, P.d);
+  gl.uniform4fv(disp.u.u_params, params);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function frame() {
+  const t = now(), w = WORLDS[S.world], params = worldParams(t);
+  document.body.classList.toggle('idle', t - mouse.last > 2.5);
+  if (!mouse.down) mouse.s *= 0.8;
+  let m;
+  if (mouse.s > 0.01) m = [mouse.x, mouse.y, (mouse.down ? w.brush * 1.8 : w.brush) / S.cell, mouse.s];
+  else if (S.ghost && t - mouse.last > 3) { const g = ghostPos(t); m = [g[0], g[1], w.brush * 0.7 / S.cell, 0.6]; }
+  else m = [0, 0, 0, 0];
+  if (!S.paused) {
+    if (w.rain && t > nextRain) {
+      seed[0] = Math.random() * W; seed[1] = Math.random() * H; seed[2] = w.rainR; seed[3] = 1;
+      nextRain = t + w.rain * (0.5 + Math.random());
+    }
+    acc = Math.min(acc + S.speed, Math.max(1, S.speed));
+    while (acc >= 1) { step(t, params, m); acc -= 1; }
+  }
+  if (pendingReset) step(t, params, m);
+  draw(t, params);
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------- UI
+function toast(main, sub) {
+  $('toast').innerHTML = `<b>${main}</b>${sub ? `<span>${sub}</span>` : ''}`;
+  $('toast').classList.remove('hide');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.add('hide'), 1800);
+}
+function showHelp(on) { $('help').classList.toggle('hide', !on); }
+function setWorld(i) {
+  S.world = (i + WORLDS.length) % WORLDS.length;
+  const w = WORLDS[S.world];
+  S.speed = w.speed; S.cell = w.cell; pendingReset = 1; nextRain = 0;
+  resize(); syncURL(); toast(w.name, w.desc);
+}
+function setPal(i) { S.pal = (i + PALETTES.length) % PALETTES.length; syncURL(); toast(PALETTES[S.pal].name, 'palette'); }
+function setSpeed(d) {
+  const i = Math.max(0, Math.min(SPEEDS.length - 1, SPEEDS.indexOf(S.speed) + d));
+  S.speed = SPEEDS[i]; syncURL(); toast(`${S.speed}× speed`, S.speed < 1 ? `1 step / ${1 / S.speed} frames` : `${S.speed} steps / frame`);
+}
+function setCell(z) { S.cell = Math.max(1, Math.min(16, z)); resize(); syncURL(); toast(`${S.cell}px cells`, `${W}×${H}`); }
+function savePNG() {
+  draw(now(), worldParams(now()));
+  canvas.toBlob(b => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = `automata-${WORLDS[S.world].id}-${Date.now()}.png`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+  toast('Saved', 'PNG');
+}
+
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k >= '1' && k <= String(WORLDS.length)) setWorld(+k - 1);
+  else if (k === 'Tab') setWorld(S.world + (e.shiftKey ? -1 : 1));
+  else if (k === 'ArrowRight') setPal(S.pal + 1);
+  else if (k === 'ArrowLeft') setPal(S.pal - 1);
+  else if (k === 'ArrowUp') setSpeed(1);
+  else if (k === 'ArrowDown') setSpeed(-1);
+  else if (k === '-' || k === '_') setCell(S.cell - 1);
+  else if (k === '=' || k === '+') setCell(S.cell + 1);
+  else if (k === ' ') { S.paused = !S.paused; toast(S.paused ? 'Paused' : 'Running'); }
+  else if (k === 'r' || k === 'R') { pendingReset = 1; toast('Reseeded'); }
+  else if (k === 'x' || k === 'X') { pendingReset = 2; toast('Cleared', 'move the mouse to paint'); }
+  else if (k === 'g' || k === 'G') { S.ghost = !S.ghost; syncURL(); toast(`Ghost brush ${S.ghost ? 'on' : 'off'}`); }
+  else if (k === 'f' || k === 'F') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+  else if (k === 's' || k === 'S') savePNG();
+  else if (k === 'h' || k === 'H' || k === '?') { helpPinned = $('help').classList.contains('hide'); clearTimeout(helpTimer); showHelp(helpPinned); }
+  else if (k === 'Escape') { helpPinned = false; showHelp(false); }
+  else return;
+  e.preventDefault();
+});
+
+canvas.addEventListener('pointermove', e => {
+  const nx = e.clientX / innerWidth * W, ny = (1 - e.clientY / innerHeight) * H;
+  const d = Math.hypot(nx - mouse.x, ny - mouse.y);
+  mouse.x = nx; mouse.y = ny; mouse.last = now();
+  mouse.s = Math.min(1, mouse.s + 0.2 + d * 0.03);
+});
+canvas.addEventListener('pointerdown', e => { mouse.down = true; mouse.s = 1; mouse.last = now();
+  mouse.x = e.clientX / innerWidth * W; mouse.y = (1 - e.clientY / innerHeight) * H; });
+addEventListener('pointerup', () => { mouse.down = false; });
+addEventListener('pointercancel', () => { mouse.down = false; });
+addEventListener('resize', resize);
+
+// ---------------------------------------------------------------- go
+parseURL(); syncURL(); resize();
+if (DBG.steps) {
+  const t = now(), p = worldParams(t), w = WORLDS[S.world], every = Math.max(1, Math.round(w.rain * 60 * S.speed));
+  for (let i = 0; i < DBG.steps; i++) {
+    if (w.rain && i % every === 0) { seed[0] = Math.random() * W; seed[1] = Math.random() * H; seed[2] = w.rainR; seed[3] = 1; }
+    step(t, p, [0, 0, 0, 0]);
+  }
+}
+helpTimer = setTimeout(() => showHelp(false), 6000);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
