@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WoW Zone Music Quiz</title>
+<style>
+  :root {
+    --bg: #0e0c14;
+    --panel: #181423;
+    --panel-2: #211b30;
+    --text: #ece4d2;
+    --muted: #9b917f;
+    --gold: #d9b45a;
+    --gold-dim: #8a7132;
+    --green: #5ec26a;
+    --red: #e0574f;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: Georgia, "Times New Roman", serif; }
+  body { min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 20px 16px 40px; }
+  main { width: 100%; max-width: 720px; }
+  h1 { font-size: 1.7rem; margin: 0; letter-spacing: 0.04em; color: var(--gold); font-weight: normal; }
+  h1 small { display: block; font-size: 0.85rem; color: var(--muted); letter-spacing: 0; margin-top: 4px; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .score { display: flex; gap: 14px; font-family: system-ui, sans-serif; font-size: 0.9rem; color: var(--muted); align-items: baseline; }
+  .score b { color: var(--text); font-size: 1.1rem; }
+  .score button { background: none; border: 1px solid var(--gold-dim); color: var(--muted); border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 0.8rem; }
+  .score button:hover { color: var(--gold); border-color: var(--gold); }
+
+  .stage { position: relative; height: 240px; border-radius: var(--radius); overflow: hidden;
+    background: radial-gradient(ellipse at 50% 120%, #2c2340 0%, var(--panel) 60%, #120f1a 100%);
+    border: 1px solid #2b2438; user-select: none; }
+  .stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; }
+  .disc { position: absolute; left: 50%; top: 50%; width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%;
+    background: repeating-radial-gradient(circle at center, #1a1622 0 2px, #2a2436 2px 4px);
+    box-shadow: 0 0 0 4px #0b0910, 0 0 40px rgba(217,180,90,0.08); transition: box-shadow 0.4s; }
+  .disc::after { content: ""; position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
+    background: radial-gradient(circle, #0b0910 0 6px, var(--gold-dim) 6px 100%); }
+  .stage.playing .disc { animation: spin 3s linear infinite; box-shadow: 0 0 0 4px #0b0910, 0 0 60px rgba(217,180,90,0.25); }
+  .stage.buffering .disc { animation: pulse 1s ease-in-out infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 50% { opacity: 0.5; } }
+  .status { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-family: system-ui, sans-serif; font-size: 0.85rem; color: var(--muted); pointer-events: none; }
+  .stage.playing .status { color: var(--gold); }
+  .hint { position: absolute; left: 0; right: 0; top: 12px; text-align: center; font-family: system-ui, sans-serif; font-size: 0.75rem; color: #5f5770; pointer-events: none; }
+  /* click shield: the parent passes events through; the strips catch clicks near YouTube's own links */
+  .shield { position: absolute; inset: 0; pointer-events: none; }
+  .shield div { position: absolute; pointer-events: auto; cursor: pointer; }
+  .shield .t { left: 0; right: 0; top: 0; height: 28%; }
+  .shield .b { left: 0; right: 0; bottom: 0; height: 22%; }
+  .shield .l { left: 0; top: 28%; bottom: 22%; width: 22%; }
+  .shield .r { right: 0; top: 28%; bottom: 22%; width: 22%; }
+
+  .controls { display: flex; gap: 8px; margin: 10px 0 18px; font-family: system-ui, sans-serif; }
+  .controls button { flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid #332b45; border-radius: 8px; padding: 10px; cursor: pointer; font-size: 0.95rem; }
+  .controls button:hover { border-color: var(--gold-dim); }
+  .controls button:disabled { opacity: 0.4; cursor: default; }
+
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 480px) { .choices { grid-template-columns: 1fr; } }
+  .choice { position: relative; background: var(--panel); border: 1px solid #332b45; color: var(--text); border-radius: var(--radius);
+    padding: 16px 14px 16px 44px; text-align: left; font-family: Georgia, serif; font-size: 1.05rem; cursor: pointer; transition: transform 0.15s, border-color 0.15s, opacity 0.3s; }
+  .choice:hover:not(:disabled) { border-color: var(--gold); transform: translateY(-1px); }
+  .choice .k { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 6px;
+    background: #2a2436; color: var(--muted); font: 0.75rem system-ui, sans-serif; display: flex; align-items: center; justify-content: center; }
+  .choice:disabled { cursor: default; }
+  .choices.done .choice:not(.correct):not(.wrong) { opacity: 0.35; }
+  .choice.correct { border-color: var(--green); box-shadow: 0 0 0 1px var(--green), 0 0 24px rgba(94,194,106,0.35); animation: pop 0.5s ease-out; }
+  .choice.correct .k { background: var(--green); color: #06130a; }
+  .choice.wrong { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); animation: shake 0.45s ease-in-out; }
+  .choice.wrong .k { background: var(--red); color: #1a0705; }
+  .choice.answer { animation: glow 0.9s ease-out 0.25s both; }
+  @keyframes pop { 30% { transform: scale(1.04); } }
+  @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+  @keyframes glow { from { box-shadow: 0 0 0 1px var(--green), 0 0 0 rgba(94,194,106,0); opacity: 0.35; } to { box-shadow: 0 0 0 1px var(--green), 0 0 24px rgba(94,194,106,0.35); opacity: 1; } }
+
+  .reveal { margin-top: 16px; padding: 14px 16px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid #332b45;
+    display: none; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; animation: rise 0.35s ease-out; }
+  .reveal.show { display: flex; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  .reveal .msg { font-size: 1.1rem; }
+  .reveal .msg.ok { color: var(--green); }
+  .reveal .msg.no { color: var(--red); }
+  .reveal .sub { color: var(--muted); font-family: system-ui, sans-serif; font-size: 0.85rem; margin-top: 4px; }
+  .reveal .sub a { color: var(--muted); }
+  .reveal .next { background: var(--gold); color: #1a1408; border: 0; border-radius: 8px; padding: 10px 18px; font: bold 0.95rem system-ui, sans-serif; cursor: pointer; }
+  .reveal .next:hover { filter: brightness(1.1); }
+
+  details { margin-top: 22px; font-family: system-ui, sans-serif; font-size: 0.85rem; color: var(--muted); }
+  summary { cursor: pointer; color: var(--muted); }
+  summary:hover { color: var(--gold); }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; }
+  .row span.lbl { width: 90px; color: var(--muted); }
+  .chip { background: var(--panel); border: 1px solid #332b45; color: var(--muted); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-size: 0.8rem; }
+  .chip.on { border-color: var(--gold); color: var(--gold); }
+  .chip:hover { border-color: var(--gold-dim); }
+
+  footer { margin-top: 28px; color: #5f5770; font: 0.75rem system-ui, sans-serif; line-height: 1.5; }
+  footer a { color: #7c7290; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); background: var(--panel-2); border: 1px solid var(--gold-dim); color: var(--text);
+    padding: 10px 16px; border-radius: 8px; font: 0.85rem system-ui, sans-serif; opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>WoW Zone Music Quiz<small>Press play, listen, and name the zone.</small></h1>
+    <div class="score">
+      <span>Score <b id="sc">0</b>/<b id="st">0</b></span>
+      <span>Streak <b id="sk">0</b></span>
+      <span>Best <b id="sb">0</b></span>
+      <button id="reset" title="Reset score and start a fresh run">Reset</button>
+    </div>
+  </header>
+
+  <div class="stage" id="stage">
+    <div id="yt"></div>
+    <div class="disc"></div>
+    <div class="hint">The video is hidden on purpose, so nothing spoils the answer.</div>
+    <div class="status" id="status">Loading player…</div>
+    <div class="shield"><div class="t"></div><div class="b"></div><div class="l"></div><div class="r"></div></div>
+  </div>
+  <div class="controls">
+    <button id="play" disabled>▶ Play</button>
+    <button id="jump" disabled title="Seek to a different random spot in the track">⤳ Jump elsewhere</button>
+    <button id="skip" title="Give up on this one and draw a new zone (counts as a miss)">Skip ↷</button>
+  </div>
+
+  <div class="choices" id="choices"></div>
+
+  <div class="reveal" id="reveal" aria-live="polite">
+    <div>
+      <div class="msg" id="msg"></div>
+      <div class="sub" id="sub"></div>
+    </div>
+    <button class="next" id="next">Next zone →</button>
+  </div>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <div class="row"><span class="lbl">Expansions</span><span id="exps"></span></div>
+    <div class="row"><span class="lbl">Include</span><span id="kinds"></span></div>
+    <div class="row"><span class="lbl">Choices</span><span id="counts"></span></div>
+    <div class="row"><span class="lbl">Keys</span><span>1–6 choose · Space play/pause · J jump · Enter next</span></div>
+  </details>
+
+  <footer>
+    Music from the <a href="https://www.youtube.com/@Everness1" target="_blank" rel="noopener">Everness</a> "Music &amp; Ambience" series on YouTube.
+    The embedded video is fully transparent so its title and footage can't give the zone away; clicking the disc still starts YouTube's own player.
+    Score and settings live in the URL, so you can bookmark or share a run.
+  </footer>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const ZONES = [
+  {"id":"MW4fASDkQXA","n":"Elwynn Forest","e":"classic","k":"zone"},
+  {"id":"xTPn_Nk_KrM","n":"Ashenvale","e":"classic","k":"zone"},
+  {"id":"Z3O2r5K8e9A","n":"Westfall","e":"classic","k":"zone"},
+  {"id":"Gli5allDOa8","n":"Stranglethorn Vale","e":"classic","k":"zone"},
+  {"id":"q8PqlJBeuT0","n":"Mulgore","e":"classic","k":"zone"},
+  {"id":"BV-v9bdMQp0","n":"Teldrassil","e":"classic","k":"zone"},
+  {"id":"YONdeDeSgrQ","n":"The Barrens","e":"classic","k":"zone"},
+  {"id":"YfMn7UfZzGc","n":"Dun Morogh","e":"classic","k":"zone"},
+  {"id":"roMWEeV2P4U","n":"Stormwind City","e":"classic","k":"city"},
+  {"id":"LwMic-KXQlY","n":"Feralas","e":"classic","k":"zone"},
+  {"id":"L_QA-ZUAOHk","n":"Orgrimmar","e":"classic","k":"city"},
+  {"id":"VRE1WjivRaU","n":"Thunder Bluff","e":"classic","k":"city"},
+  {"id":"oSF4keDUM5E","n":"Tirisfal Glades","e":"classic","k":"zone"},
+  {"id":"jpb1nH2q_0k","n":"Duskwood","e":"classic","k":"zone"},
+  {"id":"YDOp-IlsO6I","n":"Winterspring","e":"classic","k":"zone"},
+  {"id":"RUFJdHSQZrk","n":"Redridge Mountains","e":"classic","k":"zone"},
+  {"id":"aFbCofgwdXo","n":"Ironforge","e":"classic","k":"city"},
+  {"id":"ydrfcDTLS0Y","n":"Tanaris","e":"classic","k":"zone"},
+  {"id":"wLY-5S-6xuY","n":"Darnassus","e":"classic","k":"city"},
+  {"id":"WaG9K6Agx-0","n":"Undercity","e":"classic","k":"city"},
+  {"id":"HOdFlmnyaTQ","n":"Ahn'Qiraj","e":"classic","k":"instance"},
+  {"id":"ejqUoPoyUg8","n":"Durotar","e":"classic","k":"zone"},
+  {"id":"rbM0eGQepgc","n":"Moonglade","e":"classic","k":"zone"},
+  {"id":"a2FUqpDdvH8","n":"Darkmoon Faire","e":"classic","k":"zone"},
+  {"id":"tLeHkxSgPlk","n":"Silverpine Forest","e":"classic","k":"zone"},
+  {"id":"rzL9ZpnmSYU","n":"Silithus","e":"classic","k":"zone"},
+  {"id":"5VhP28vOl74","n":"Darkshore","e":"classic","k":"zone"},
+  {"id":"rGiwjDZfW5s","n":"Eastern Plaguelands","e":"classic","k":"zone"},
+  {"id":"7m0FDE2ggOA","n":"Western Plaguelands","e":"classic","k":"zone"},
+  {"id":"FU_yNE2MMOU","n":"Eversong Woods","e":"tbc","k":"zone"},
+  {"id":"fwrflawejvE","n":"Azuremyst Isle","e":"tbc","k":"zone"},
+  {"id":"4IrA6af0SJs","n":"Nagrand (Outland)","e":"tbc","k":"zone"},
+  {"id":"f-Ic9feSwcg","n":"Zangarmarsh","e":"tbc","k":"zone"},
+  {"id":"bSwzMgZqcR4","n":"Silvermoon City","e":"tbc","k":"city"},
+  {"id":"BafgaT1PS_A","n":"Hellfire Peninsula","e":"tbc","k":"zone"},
+  {"id":"pXseyytvgkg","n":"The Exodar","e":"tbc","k":"city"},
+  {"id":"HKnBT3sWUjg","n":"Ghostlands","e":"tbc","k":"zone"},
+  {"id":"jrYxp3OuB1s","n":"Karazhan","e":"tbc","k":"instance"},
+  {"id":"e15tpUhTMD8","n":"Terokkar Forest","e":"tbc","k":"zone"},
+  {"id":"BBaNoOsKaEM","n":"Sunwell Plateau","e":"tbc","k":"instance"},
+  {"id":"uAwIBtov5EM","n":"Netherstorm","e":"tbc","k":"zone"},
+  {"id":"XcQri_b6q9A","n":"Bloodmyst Isle","e":"tbc","k":"zone"},
+  {"id":"3VmF7pIuzMU","n":"Zul'Aman","e":"tbc","k":"instance"},
+  {"id":"P3r_6wUHYIY","n":"Shadowmoon Valley (Outland)","e":"tbc","k":"zone"},
+  {"id":"n3MCruu35Og","n":"Black Temple","e":"tbc","k":"instance"},
+  {"id":"KrKlW_v-Ylk","n":"Blade's Edge Mountains","e":"tbc","k":"zone"},
+  {"id":"OMRI8tY_uuk","n":"Caverns of Time","e":"tbc","k":"instance"},
+  {"id":"pWTSK5waNs8","n":"Grizzly Hills","e":"wotlk","k":"zone"},
+  {"id":"wjTe0R2bREY","n":"Howling Fjord","e":"wotlk","k":"zone"},
+  {"id":"C9IXUwqxIao","n":"The Storm Peaks","e":"wotlk","k":"zone"},
+  {"id":"BV7mKCgKhZY","n":"Dalaran (Northrend)","e":"wotlk","k":"city"},
+  {"id":"-3cSt5tW7YQ","n":"Sholazar Basin","e":"wotlk","k":"zone"},
+  {"id":"EpQSBmsj5L4","n":"Ulduar","e":"wotlk","k":"instance"},
+  {"id":"wG_0NevdvzI","n":"Crystalsong Forest","e":"wotlk","k":"zone"},
+  {"id":"SIkNWR6Y-CY","n":"Icecrown","e":"wotlk","k":"zone"},
+  {"id":"0pEd9xtsMvA","n":"Argent Tournament Grounds","e":"wotlk","k":"zone"},
+  {"id":"x1d8O0E3i08","n":"Wintergrasp","e":"wotlk","k":"zone"},
+  {"id":"VCLxvtccYIs","n":"Naxxramas","e":"wotlk","k":"instance"},
+  {"id":"ne-JwpCXUbM","n":"Icecrown Citadel","e":"wotlk","k":"instance"},
+  {"id":"Lu1yIzqpUR4","n":"Borean Tundra","e":"wotlk","k":"zone"},
+  {"id":"DTwwIKU82xE","n":"Dragonblight","e":"wotlk","k":"zone"},
+  {"id":"Sc5Oj1WgwwI","n":"Zul'Drak","e":"wotlk","k":"zone"},
+  {"id":"tBUPA-g65jY","n":"The Nexus","e":"wotlk","k":"instance"},
+  {"id":"Q5xGd9jwd6Q","n":"Azjol-Nerub","e":"wotlk","k":"instance"},
+  {"id":"R8jsJQnKhMo","n":"Gilneas","e":"cata","k":"zone"},
+  {"id":"7SC9bX3BeGI","n":"Vashj'ir","e":"cata","k":"zone"},
+  {"id":"-ztYPn3QvV8","n":"Mount Hyjal","e":"cata","k":"zone"},
+  {"id":"o4Xma-jmFNE","n":"Uldum","e":"cata","k":"zone"},
+  {"id":"Ph45OfLPQME","n":"Skywall","e":"cata","k":"instance"},
+  {"id":"kCoQV-xKenk","n":"Firelands","e":"cata","k":"instance"},
+  {"id":"kwLQH7NDCfw","n":"Deepholm","e":"cata","k":"zone"},
+  {"id":"tyfGG_knIJo","n":"The Maelstrom","e":"cata","k":"zone"},
+  {"id":"nWcbYcU1eaQ","n":"The Jade Forest","e":"mop","k":"zone"},
+  {"id":"bAG2wmv3kwo","n":"The Wandering Isle","e":"mop","k":"zone"},
+  {"id":"50EOOzhovjg","n":"Valley of the Four Winds","e":"mop","k":"zone"},
+  {"id":"FIeql1dS2GM","n":"Kun-Lai Summit","e":"mop","k":"zone"},
+  {"id":"73B9a2EKlcM","n":"Krasarang Wilds","e":"mop","k":"zone"},
+  {"id":"pFy9i3niIig","n":"Townlong Steppes","e":"mop","k":"zone"},
+  {"id":"LYy9Xk4Y_A8","n":"Shadowmoon Valley (Draenor)","e":"wod","k":"zone"},
+  {"id":"IjrkRFZHOUs","n":"Talador","e":"wod","k":"zone"},
+  {"id":"0msy-ALryyw","n":"Nagrand (Draenor)","e":"wod","k":"zone"},
+  {"id":"NC6RdsTvcuA","n":"Blackrock Foundry","e":"wod","k":"instance"},
+  {"id":"61biu9jhDxs","n":"Gorgrond","e":"wod","k":"zone"},
+  {"id":"EpHlONJwLa8","n":"Frostfire Ridge","e":"wod","k":"zone"},
+  {"id":"RttCWIwq46o","n":"Spires of Arak","e":"wod","k":"zone"},
+  {"id":"XTVHJEHX_uY","n":"Tanaan Jungle","e":"wod","k":"zone"},
+  {"id":"PIhcPcvNPDs","n":"Highmaul","e":"wod","k":"instance"},
+  {"id":"ACgoXvkhlPE","n":"Suramar","e":"legion","k":"zone"},
+  {"id":"MvJ_uKiZxRk","n":"Highmountain","e":"legion","k":"zone"},
+  {"id":"yKTOZ47PK08","n":"Stormheim","e":"legion","k":"zone"},
+  {"id":"1hRjNoUl4WQ","n":"Dalaran (Broken Isles)","e":"legion","k":"city"},
+  {"id":"yHYUvPyKG0o","n":"Val'sharah","e":"legion","k":"zone"},
+  {"id":"cBWnjEC81fA","n":"Azsuna","e":"legion","k":"zone"},
+  {"id":"3pR4Z6grAI8","n":"Argus","e":"legion","k":"zone"},
+  {"id":"Mtnt1lrXjhw","n":"The Emerald Nightmare","e":"legion","k":"instance"},
+  {"id":"K3hjVijzrtM","n":"Boralus","e":"bfa","k":"city"},
+  {"id":"rFek5w7tDI0","n":"Arathi Highlands (Warfront)","e":"bfa","k":"zone"},
+  {"id":"7JMm6b-Zi_s","n":"Dazar'alor","e":"bfa","k":"city"},
+  {"id":"yMkbKZWDkqg","n":"Mechagon Island","e":"bfa","k":"zone"},
+  {"id":"M-9DXlyCFkw","n":"Tiragarde Sound","e":"bfa","k":"zone"},
+  {"id":"NGuccBwxqAk","n":"Vol'dun","e":"bfa","k":"zone"},
+  {"id":"DMAm2Ozz0z8","n":"Oribos","e":"sl","k":"city"}
+];
+
+const EXPS = [
+  ['classic', 'Classic'], ['tbc', 'Burning Crusade'], ['wotlk', 'Wrath'], ['cata', 'Cataclysm'], ['mop', 'Pandaria'],
+  ['wod', 'Draenor'], ['legion', 'Legion'], ['bfa', 'Battle for Azeroth'], ['sl', 'Shadowlands'],
+];
+const EXP_NAME = Object.fromEntries(EXPS);
+const KINDS = [['zone', 'Zones'], ['city', 'Cities'], ['instance', 'Dungeons & Raids']];
+const COUNTS = [2, 4, 6];
+
+// ---------- state (mirrored in the URL hash) ----------
+const S = {
+  exps: new Set(EXPS.map(e => e[0])),
+  kinds: new Set(['zone', 'city']),
+  n: 4,
+  seed: (Math.random() * 0x7fffffff) | 0,
+  round: 0,
+  correct: 0, total: 0, streak: 0, best: 0,
+  answered: -1, // index of the chosen option this round; -1 = not yet answered, -2 = skipped
+};
+const bad = new Set(); // video ids that failed to load this session
+
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const list = (k, valid) => p.has(k) ? new Set(p.get(k).split(',').filter(v => valid.includes(v))) : null;
+  const e = list('e', EXPS.map(x => x[0])); if (e && e.size) S.exps = e;
+  const k = list('k', KINDS.map(x => x[0])); if (k && k.size) S.kinds = k;
+  const n = +p.get('n'); if (COUNTS.includes(n)) S.n = n;
+  const int = (k, d) => { const v = parseInt(p.get(k), 10); return Number.isFinite(v) && v >= 0 ? v : d; };
+  S.seed = int('s', S.seed); S.round = int('r', 0);
+  S.correct = int('c', 0); S.total = int('t', 0); S.streak = int('st', 0); S.best = int('b', 0);
+  const a = parseInt(p.get('a'), 10); S.answered = Number.isFinite(a) && a >= -2 ? a : -1;
+}
+function writeHash() {
+  const p = new URLSearchParams();
+  p.set('e', [...S.exps].join(',')); p.set('k', [...S.kinds].join(',')); p.set('n', S.n);
+  p.set('s', S.seed); p.set('r', S.round);
+  p.set('c', S.correct); p.set('t', S.total); p.set('st', S.streak); p.set('b', S.best);
+  if (S.answered !== -1) p.set('a', S.answered);
+  history.replaceState(null, '', '#' + p);
+}
+
+// ---------- deterministic rounds ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function roundSeed(r) { return (S.seed ^ Math.imul(r + 1, 0x9E3779B1)) | 0; }
+function shuffle(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function pool() {
+  let p = ZONES.filter(z => S.exps.has(z.e) && S.kinds.has(z.k) && !bad.has(z.id));
+  if (p.length < 2) p = ZONES.filter(z => !bad.has(z.id));
+  return p;
+}
+const answerMemo = new Map();
+function answerFor(r, p) {
+  if (answerMemo.has(r)) return answerMemo.get(r);
+  const rng = mulberry32(roundSeed(r));
+  const recent = new Set();
+  for (let i = Math.max(0, r - 8); i < r; i++) recent.add(answerFor(i, p).id);
+  let z = p[Math.floor(rng() * p.length)];
+  for (let tries = 0; tries < 30 && recent.has(z.id) && recent.size < p.length; tries++) z = p[Math.floor(rng() * p.length)];
+  answerMemo.set(r, z);
+  return z;
+}
+function roundData(r) {
+  const p = pool();
+  const answer = answerFor(r, p);
+  const rng = mulberry32(roundSeed(r) ^ 0x5bd1e995);
+  const n = Math.min(S.n, p.length);
+  const same = shuffle(p.filter(z => z !== answer && z.e === answer.e), rng);
+  const other = shuffle(p.filter(z => z !== answer && z.e !== answer.e), rng);
+  const distractors = same.concat(other).slice(0, n - 1);
+  const choices = shuffle([answer, ...distractors], rng);
+  const start = 45 + Math.floor(rng() * 2700); // somewhere in the first ~46 minutes of an hour-long mix
+  return { answer, choices, start };
+}
+
+// ---------- player ----------
+let player = null, ready = false, current = null;
+const $ = id => document.getElementById(id);
+const stage = $('stage'), statusEl = $('status'), playBtn = $('play'), jumpBtn = $('jump');
+const MOCK = new URLSearchParams(location.search).has('mock');
+
+function setState(cls, text) {
+  stage.classList.remove('playing', 'paused', 'buffering', 'cued');
+  if (cls) stage.classList.add(cls);
+  statusEl.textContent = text;
+  playBtn.textContent = cls === 'playing' || cls === 'buffering' ? '❚❚ Pause' : '▶ Play';
+}
+function onStateChange(ev) {
+  const YTS = window.YT.PlayerState;
+  switch (ev.data) {
+    case YTS.PLAYING: setState('playing', 'Now playing… what zone is this?'); break;
+    case YTS.PAUSED: setState('paused', 'Paused'); break;
+    case YTS.BUFFERING: setState('buffering', 'Loading…'); break;
+    case YTS.CUED: setState('cued', 'Click the disc or press Play'); break;
+    case YTS.ENDED: setState('paused', 'Track ended. Press Jump to hear another part.'); break;
+  }
+}
+function onError(ev) {
+  if (!current) return;
+  bad.add(current.answer.id); answerMemo.clear();
+  toast("That track won't play here, drawing another zone.");
+  S.answered = -1; loadRound();
+}
+function onReady() {
+  ready = true; playBtn.disabled = false; jumpBtn.disabled = false;
+  cueCurrent();
+}
+function cueCurrent() {
+  if (!ready || !current) return;
+  player.cueVideoById({ videoId: current.answer.id, startSeconds: current.start });
+  setState('cued', 'Click the disc or press Play');
+}
+function togglePlay() {
+  if (!ready) return;
+  const st = player.getPlayerState();
+  const YTS = window.YT.PlayerState;
+  if (st === YTS.PLAYING || st === YTS.BUFFERING) player.pauseVideo(); else player.playVideo();
+}
+function jump() {
+  if (!ready) return;
+  const t = 45 + Math.floor(Math.random() * 2700);
+  player.seekTo(t, true);
+  player.playVideo();
+}
+function initPlayer() {
+  player = new YT.Player('yt', {
+    width: '100%', height: '100%',
+    videoId: current ? current.answer.id : ZONES[0].id,
+    playerVars: { controls: 0, disablekb: 1, rel: 0, iv_load_policy: 3, playsinline: 1, fs: 0, start: current ? current.start : 0, ...(location.protocol.startsWith('http') ? { origin: location.origin } : {}) },
+    events: { onReady, onStateChange, onError },
+  });
+}
+if (MOCK) {
+  // Headless test stub: mimics the small slice of the IFrame API this page uses.
+  window.YT = {
+    PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 },
+    Player: class {
+      constructor(id, o) { this.ev = o.events; this.state = 5; this.el = document.getElementById(id); setTimeout(() => this.ev.onReady({ target: this }), 0); }
+      set(s) { this.state = s; this.ev.onStateChange({ data: s, target: this }); }
+      cueVideoById(o) { this.vid = o.videoId; this.set(5); }
+      playVideo() { this.set(1); } pauseVideo() { this.set(2); }
+      seekTo() {} getPlayerState() { return this.state; }
+    },
+  };
+  window.mockPlayer = () => player;
+} else {
+  window.onYouTubeIframeAPIReady = initPlayer;
+  const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+}
+
+// ---------- UI ----------
+const choicesEl = $('choices'), revealEl = $('reveal'), msgEl = $('msg'), subEl = $('sub');
+let toastTimer = 0;
+function toast(t) {
+  const el = $('toast'); el.textContent = t; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+function renderScore() {
+  $('sc').textContent = S.correct; $('st').textContent = S.total; $('sk').textContent = S.streak; $('sb').textContent = S.best;
+}
+function renderChoices() {
+  choicesEl.innerHTML = '';
+  choicesEl.classList.toggle('done', S.answered !== -1);
+  current.choices.forEach((z, i) => {
+    const b = document.createElement('button');
+    b.className = 'choice'; b.innerHTML = `<span class="k">${i + 1}</span>`; b.append(z.n);
+    b.disabled = S.answered !== -1;
+    if (S.answered !== -1) {
+      if (z === current.answer) b.classList.add(i === S.answered ? 'correct' : 'answer');
+      else if (i === S.answered) b.classList.add('wrong');
+    }
+    b.addEventListener('click', () => pick(i));
+    choicesEl.appendChild(b);
+  });
+}
+function renderReveal() {
+  if (S.answered === -1) { revealEl.classList.remove('show'); return; }
+  const a = current.answer, ok = current.choices[S.answered] === a;
+  msgEl.className = 'msg ' + (ok ? 'ok' : 'no');
+  msgEl.textContent = ok ? `Correct! ${a.n}` : S.answered === -2 ? `Skipped. It was ${a.n}.` : `Not quite. It was ${a.n}.`;
+  subEl.innerHTML = `${EXP_NAME[a.e]} · <a href="https://www.youtube.com/watch?v=${a.id}&t=${current.start}s" target="_blank" rel="noopener">Watch on YouTube ↗</a>`;
+  revealEl.classList.add('show');
+  $('next').focus({ preventScroll: true });
+}
+function loadRound() {
+  current = roundData(S.round);
+  renderChoices(); renderReveal(); renderScore(); writeHash();
+  cueCurrent();
+}
+function pick(i) {
+  if (S.answered !== -1 || !current) return;
+  S.answered = i; S.total++;
+  if (current.choices[i] === current.answer) { S.correct++; S.streak++; S.best = Math.max(S.best, S.streak); }
+  else S.streak = 0;
+  renderChoices(); renderReveal(); renderScore(); writeHash();
+}
+function next() {
+  if (S.answered === -1) return;
+  S.round++; S.answered = -1;
+  loadRound();
+}
+function skip() {
+  if (S.answered !== -1) { next(); return; }
+  S.total++; S.streak = 0; S.answered = -2;
+  renderChoices(); renderReveal(); renderScore(); writeHash();
+}
+function reroll() {
+  // settings changed: new seed, fresh round history, keep the score
+  S.seed = (Math.random() * 0x7fffffff) | 0; S.round = 0; S.answered = -1; answerMemo.clear();
+  loadRound();
+}
+function reset() {
+  S.correct = S.total = S.streak = S.best = 0;
+  reroll();
+}
+function chips(container, items, isOn, onToggle) {
+  container.innerHTML = '';
+  items.forEach(([key, label]) => {
+    const c = document.createElement('button');
+    c.className = 'chip' + (isOn(key) ? ' on' : ''); c.textContent = label;
+    c.addEventListener('click', () => { onToggle(key); renderSettings(); reroll(); });
+    container.appendChild(c);
+  });
+}
+function renderSettings() {
+  chips($('exps'), EXPS, k => S.exps.has(k), k => {
+    if (S.exps.has(k)) { if (S.exps.size > 1) S.exps.delete(k); } else S.exps.add(k);
+  });
+  chips($('kinds'), KINDS, k => S.kinds.has(k), k => {
+    if (S.kinds.has(k)) { if (S.kinds.size > 1) S.kinds.delete(k); } else S.kinds.add(k);
+  });
+  chips($('counts'), COUNTS.map(n => [n, String(n)]), n => S.n === n, n => { S.n = n; });
+}
+
+playBtn.addEventListener('click', togglePlay);
+jumpBtn.addEventListener('click', jump);
+$('skip').addEventListener('click', skip);
+$('next').addEventListener('click', next);
+$('reset').addEventListener('click', reset);
+document.querySelectorAll('.shield div').forEach(d => d.addEventListener('click', togglePlay));
+document.addEventListener('keydown', ev => {
+  if (ev.target.closest && ev.target.closest('input, textarea')) return;
+  if (ev.key >= '1' && ev.key <= '6') { const i = +ev.key - 1; if (current && i < current.choices.length) { pick(i); ev.preventDefault(); } }
+  else if (ev.key === 'Enter') { if (S.answered !== -1) { next(); ev.preventDefault(); } }
+  else if (ev.key === ' ') { if (ev.target.tagName !== 'BUTTON') { togglePlay(); ev.preventDefault(); } }
+  else if (ev.key === 'j' || ev.key === 'J') jump();
+});
+
+readHash();
+renderSettings();
+current = roundData(S.round);
+renderChoices(); renderReveal(); renderScore(); writeHash();
+if (MOCK) initPlayer();
+</script>
+</body>
+</html>
